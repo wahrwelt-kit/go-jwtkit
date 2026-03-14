@@ -1,0 +1,15 @@
+all: false
+force-file-write: true
+formatter: goimports
+log-level: info
+template: testify
+
+packages:
+  github.com/TakuyaYagam1/go-jwtkit:
+    interfaces:
+      RevocationStore:
+        config:
+          dir: "mocks"
+          filename: "RevocationStore.go"
+          pkgname: "mocks"
+          structname: "MockRevocationStore"
