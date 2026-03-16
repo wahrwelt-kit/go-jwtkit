@@ -1,4 +1,4 @@
-.PHONY: test test-race fmt lint vet mockery
+.PHONY: test test-race fmt vet mockery
 
 test:
 	go test ./...
