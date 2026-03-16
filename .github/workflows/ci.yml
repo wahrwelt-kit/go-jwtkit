@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+    branches: [main, master]
+    paths: ['backend/go-jwtkit/**']
+  pull_request:
+    paths: ['backend/go-jwtkit/**']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Vet and test
+        working-directory: backend/go-jwtkit
+        run: |
+          go mod download
+          go vet ./...
+          go test -race ./...

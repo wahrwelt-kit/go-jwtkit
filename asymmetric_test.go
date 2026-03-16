@@ -41,7 +41,7 @@ func mustEd25519KeyPair(t *testing.T) (ed25519.PrivateKey, ed25519.PublicKey) {
 func testAsymmetricRoundtrip(t *testing.T, svc *jwt.JWTServiceAsymmetric) {
 	t.Helper()
 	userID := uuid.New()
-	pair, err := svc.GenerateTokenPair(context.Background(), userID, "a@b.c", "Name", "user")
+	pair, err := svc.GenerateTokenPair(context.Background(), userID, "user")
 	require.NoError(t, err)
 	require.NotEmpty(t, pair.AccessToken)
 	claims, err := svc.ValidateAccessToken(context.Background(), pair.AccessToken)
@@ -57,7 +57,7 @@ func TestNewJWTServiceAsymmetric_RS256(t *testing.T) {
 	svc, err := jwt.NewJWTServiceAsymmetric(
 		[]jwt.AsymmetricKeyEntry{{Kid: "a1", PrivateKey: accessPriv, PublicKey: accessPub}},
 		[]jwt.AsymmetricKeyEntry{{Kid: "r1", PrivateKey: refreshPriv, PublicKey: refreshPub}},
-		time.Hour, time.Hour, testIssuer, nil, nil)
+		time.Hour, time.Hour, testIssuer, nil, nil, "")
 	require.NoError(t, err)
 	testAsymmetricRoundtrip(t, svc)
 }
@@ -80,7 +80,7 @@ func TestNewJWTServiceAsymmetric_ECDSA(t *testing.T) {
 			svc, err := jwt.NewJWTServiceAsymmetric(
 				[]jwt.AsymmetricKeyEntry{{Kid: "a1", PrivateKey: accessPriv, PublicKey: accessPub}},
 				[]jwt.AsymmetricKeyEntry{{Kid: "r1", PrivateKey: refreshPriv, PublicKey: refreshPub}},
-				time.Hour, time.Hour, testIssuer, nil, nil)
+				time.Hour, time.Hour, testIssuer, nil, nil, "")
 			require.NoError(t, err)
 			testAsymmetricRoundtrip(t, svc)
 		})
@@ -94,7 +94,7 @@ func TestNewJWTServiceAsymmetric_EdDSA(t *testing.T) {
 	svc, err := jwt.NewJWTServiceAsymmetric(
 		[]jwt.AsymmetricKeyEntry{{Kid: "a1", PrivateKey: accessPriv, PublicKey: accessPub}},
 		[]jwt.AsymmetricKeyEntry{{Kid: "r1", PrivateKey: refreshPriv, PublicKey: refreshPub}},
-		time.Hour, time.Hour, testIssuer, nil, nil)
+		time.Hour, time.Hour, testIssuer, nil, nil, "")
 	require.NoError(t, err)
 	testAsymmetricRoundtrip(t, svc)
 }
@@ -106,6 +106,6 @@ func TestNewJWTServiceAsymmetric_InvalidKeyPair(t *testing.T) {
 	_, err := jwt.NewJWTServiceAsymmetric(
 		[]jwt.AsymmetricKeyEntry{{Kid: "a1", PrivateKey: rsaPriv, PublicKey: ecPub}},
 		[]jwt.AsymmetricKeyEntry{{Kid: "r1", PrivateKey: rsaPriv, PublicKey: &rsaPriv.PublicKey}},
-		time.Hour, time.Hour, testIssuer, nil, nil)
+		time.Hour, time.Hour, testIssuer, nil, nil, "")
 	require.Error(t, err)
 }

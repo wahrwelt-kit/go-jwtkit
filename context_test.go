@@ -17,7 +17,7 @@ func TestClaimsIntoContext_ClaimsFromContext(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
 	userID := uuid.New()
-	pair, err := svc.GenerateTokenPair(context.Background(), userID, "a@b.c", "Name", "user")
+	pair, err := svc.GenerateTokenPair(context.Background(), userID, "user")
 	require.NoError(t, err)
 	claims, err := svc.ValidateAccessToken(context.Background(), pair.AccessToken)
 	require.NoError(t, err)
@@ -36,7 +36,7 @@ func TestUserIDFromContext(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
 	userID := uuid.New()
-	pair, err := svc.GenerateTokenPair(context.Background(), userID, "a@b.c", "Name", "admin")
+	pair, err := svc.GenerateTokenPair(context.Background(), userID, "admin")
 	require.NoError(t, err)
 	claims, err := svc.ValidateAccessToken(context.Background(), pair.AccessToken)
 	require.NoError(t, err)
@@ -65,10 +65,10 @@ func TestJWTAuth_Middleware(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
 	userID := uuid.New()
-	pair, err := svc.GenerateTokenPair(context.Background(), userID, "a@b.c", "Name", "user")
+	pair, err := svc.GenerateTokenPair(context.Background(), userID, "user")
 	require.NoError(t, err)
 
-	handler := jwt.JWTAuth(svc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := jwt.JWTAuth(svc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := jwt.UserIDFromContext(r.Context())
 		assert.True(t, ok)
 		assert.Equal(t, userID, id)
@@ -85,7 +85,7 @@ func TestJWTAuth_Middleware(t *testing.T) {
 func TestJWTAuth_NoToken_401(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
-	handler := jwt.JWTAuth(svc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := jwt.JWTAuth(svc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called")
 	}))
 	req := httptest.NewRequest("GET", "/", nil)
@@ -97,7 +97,7 @@ func TestJWTAuth_NoToken_401(t *testing.T) {
 func TestJWTAuth_InvalidToken_401(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
-	handler := jwt.JWTAuth(svc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := jwt.JWTAuth(svc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called")
 	}))
 	req := httptest.NewRequest("GET", "/", nil)
@@ -105,14 +105,4 @@ func TestJWTAuth_InvalidToken_401(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-}
-
-func TestExtractRaw(t *testing.T) {
-	t.Parallel()
-	req := httptest.NewRequest("GET", "/", nil)
-	assert.Empty(t, jwt.ExtractRaw(req))
-	req.Header.Set("Authorization", "Bearer abc123")
-	assert.Equal(t, "abc123", jwt.ExtractRaw(req))
-	req.Header.Set("Authorization", "Bearer  ")
-	assert.Equal(t, "", jwt.ExtractRaw(req))
 }

@@ -1,12 +1,14 @@
 package jwt
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -14,31 +16,33 @@ import (
 	"github.com/google/uuid"
 )
 
-// AsymmetricKeyEntry holds a key id and RSA or Ed25519 key pair for signing/verification.
+// AsymmetricKeyEntry holds a key id and a key pair for signing (private) and verification (public). Supported: *rsa.PrivateKey (RS256), *ecdsa.PrivateKey (ES256/ES384/ES512), ed25519.PrivateKey (EdDSA). RSA keys must be at least 2048 bits; ECDSA curves P-256, P-384, P-521.
 type AsymmetricKeyEntry struct {
 	Kid        string
 	PrivateKey crypto.PrivateKey
 	PublicKey  crypto.PublicKey
 }
 
-// JWTServiceAsymmetric implements Service using RS256 or EdDSA. Use NewJWTServiceAsymmetric to construct.
+// JWTServiceAsymmetric implements Service using RS256, ES256/ES384/ES512, or EdDSA. Use NewJWTServiceAsymmetric to construct.
 type JWTServiceAsymmetric struct {
-	accessKeys         []AsymmetricKeyEntry
-	refreshKeys        []AsymmetricKeyEntry
-	accessPrimaryKid   string
-	refreshPrimaryKid  string
-	accessTTL          time.Duration
-	refreshTTL         time.Duration
-	issuer             string
-	revoker            RevocationStore
-	userRoleLookup     atomic.Pointer[UserRoleLookup]
-	accessPublicByKid  map[string]crypto.PublicKey
-	refreshPublicByKid map[string]crypto.PublicKey
+	accessKeys          []AsymmetricKeyEntry
+	refreshKeys         []AsymmetricKeyEntry
+	accessPrimaryKid    string
+	refreshPrimaryKid   string
+	accessTTL           time.Duration
+	refreshTTL          time.Duration
+	issuer              string
+	audience            string
+	revoker             RevocationStore
+	userRoleLookup      atomic.Pointer[UserRoleLookup]
+	accessPublicByKid   map[string]crypto.PublicKey
+	refreshPublicByKid  map[string]crypto.PublicKey
+	accessValidMethods  []string
+	refreshValidMethods []string
+	strictKid           atomic.Bool
 }
 
-// NewJWTServiceAsymmetric builds a JWT service with RSA (RS256), ECDSA (ES256/ES384/ES512), or Ed25519 (EdDSA) keys.
-// Issuer must be non-empty. Revoker and userRoleLookup may be nil.
-// Key pairs are validated at construction: RSA requires RSA public key, ECDSA requires ECDSA public key (P-256/P-384/P-521), Ed25519 requires Ed25519 public key.
+// NewJWTServiceAsymmetric builds a JWT service with asymmetric keys. Issuer must be non-empty; access and refresh key slices must each contain at least one valid key pair. Revoker and userRoleLookup may be nil. Non-empty audience adds aud claim and validation. Key slices are copied but PrivateKey/PublicKey values are stored by reference; do not modify the key entries after construction.
 func NewJWTServiceAsymmetric(
 	accessKeys []AsymmetricKeyEntry,
 	refreshKeys []AsymmetricKeyEntry,
@@ -47,6 +51,7 @@ func NewJWTServiceAsymmetric(
 	issuer string,
 	revoker RevocationStore,
 	userRoleLookup UserRoleLookup,
+	audience string,
 ) (*JWTServiceAsymmetric, error) {
 	if len(accessKeys) == 0 {
 		return nil, fmt.Errorf("access keys must contain at least one key")
@@ -56,6 +61,18 @@ func NewJWTServiceAsymmetric(
 	}
 	if issuer == "" {
 		return nil, fmt.Errorf("issuer is required")
+	}
+	if accessTTL <= 0 {
+		return nil, fmt.Errorf("accessTTL must be positive")
+	}
+	if refreshTTL <= 0 {
+		return nil, fmt.Errorf("refreshTTL must be positive")
+	}
+	if accessTTL > MaxAccessTTL {
+		return nil, fmt.Errorf("accessTTL must not exceed %v", MaxAccessTTL)
+	}
+	if refreshTTL > MaxRefreshTTL {
+		return nil, fmt.Errorf("refreshTTL must not exceed %v", MaxRefreshTTL)
 	}
 	for i, k := range accessKeys {
 		if k.PrivateKey == nil || k.PublicKey == nil {
@@ -75,23 +92,38 @@ func NewJWTServiceAsymmetric(
 	}
 	accessPub := make(map[string]crypto.PublicKey, len(accessKeys))
 	for _, k := range accessKeys {
+		if k.Kid == "" {
+			return nil, fmt.Errorf("access key Kid must be non-empty")
+		}
+		if _, exists := accessPub[k.Kid]; exists {
+			return nil, fmt.Errorf("duplicate access key Kid %q", k.Kid)
+		}
 		accessPub[k.Kid] = k.PublicKey
 	}
 	refreshPub := make(map[string]crypto.PublicKey, len(refreshKeys))
 	for _, k := range refreshKeys {
+		if k.Kid == "" {
+			return nil, fmt.Errorf("refresh key Kid must be non-empty")
+		}
+		if _, exists := refreshPub[k.Kid]; exists {
+			return nil, fmt.Errorf("duplicate refresh key Kid %q", k.Kid)
+		}
 		refreshPub[k.Kid] = k.PublicKey
 	}
 	j := &JWTServiceAsymmetric{
-		accessKeys:         accessKeys,
-		refreshKeys:        refreshKeys,
-		accessPrimaryKid:   accessKeys[0].Kid,
-		refreshPrimaryKid:  refreshKeys[0].Kid,
-		accessTTL:          accessTTL,
-		refreshTTL:         refreshTTL,
-		issuer:             issuer,
-		revoker:            revoker,
-		accessPublicByKid:  accessPub,
-		refreshPublicByKid: refreshPub,
+		accessKeys:          slices.Clone(accessKeys),
+		refreshKeys:         slices.Clone(refreshKeys),
+		accessPrimaryKid:    accessKeys[0].Kid,
+		refreshPrimaryKid:   refreshKeys[0].Kid,
+		accessTTL:           accessTTL,
+		refreshTTL:          refreshTTL,
+		issuer:              issuer,
+		audience:            audience,
+		revoker:             revoker,
+		accessPublicByKid:   accessPub,
+		refreshPublicByKid:  refreshPub,
+		accessValidMethods:  buildValidMethodsFromKeys(accessKeys),
+		refreshValidMethods: buildValidMethodsFromKeys(refreshKeys),
 	}
 	if userRoleLookup != nil {
 		j.userRoleLookup.Store(&userRoleLookup)
@@ -99,21 +131,45 @@ func NewJWTServiceAsymmetric(
 	return j, nil
 }
 
+const minRSAKeyBits = 2048
+
 func validateAsymmetricKeyPair(priv crypto.PrivateKey, pub crypto.PublicKey) error {
 	switch k := priv.(type) {
 	case *rsa.PrivateKey:
-		if _, ok := pub.(*rsa.PublicKey); !ok {
+		pubRSA, ok := pub.(*rsa.PublicKey)
+		if !ok {
 			return fmt.Errorf("RSA private key requires RSA public key")
+		}
+		if k.N.BitLen() < minRSAKeyBits {
+			return fmt.Errorf("RSA key must be at least %d bits", minRSAKeyBits)
+		}
+		if err := k.Validate(); err != nil {
+			return fmt.Errorf("RSA key validation: %w", err)
+		}
+		if k.N.Cmp(pubRSA.N) != 0 || k.E != pubRSA.E {
+			return fmt.Errorf("RSA public key does not match private key")
 		}
 		return nil
 	case ed25519.PrivateKey:
-		if _, ok := pub.(ed25519.PublicKey); !ok {
+		pubEd, ok := pub.(ed25519.PublicKey)
+		if !ok {
 			return fmt.Errorf("Ed25519 private key requires Ed25519 public key")
+		}
+		signer := priv.(crypto.Signer)
+		if !bytes.Equal(signer.Public().(ed25519.PublicKey), pubEd) {
+			return fmt.Errorf("Ed25519 public key does not match private key")
 		}
 		return nil
 	case *ecdsa.PrivateKey:
-		if _, ok := pub.(*ecdsa.PublicKey); !ok {
+		pubECDSA, ok := pub.(*ecdsa.PublicKey)
+		if !ok {
 			return fmt.Errorf("ECDSA private key requires ECDSA public key")
+		}
+		if k.Curve == nil {
+			return fmt.Errorf("ECDSA private key requires non-nil Curve")
+		}
+		if k.Curve != pubECDSA.Curve || k.X.Cmp(pubECDSA.X) != 0 || k.Y.Cmp(pubECDSA.Y) != 0 {
+			return fmt.Errorf("ECDSA public key does not match private key")
 		}
 		switch k.Curve.Params().Name {
 		case "P-256", "P-384", "P-521":
@@ -126,46 +182,65 @@ func validateAsymmetricKeyPair(priv crypto.PrivateKey, pub crypto.PublicKey) err
 	}
 }
 
-// SetUserRoleLookup sets or replaces the callback used during RefreshTokens to resolve current user data.
+// SetUserRoleLookup sets or replaces the UserRoleLookup callback used during RefreshTokens. Safe for concurrent use.
 func (j *JWTServiceAsymmetric) SetUserRoleLookup(fn UserRoleLookup) {
 	j.userRoleLookup.Store(&fn)
 }
 
-// GenerateTokenPair issues a new access and refresh token pair for the given user and claims.
-func (j *JWTServiceAsymmetric) GenerateTokenPair(ctx context.Context, userID uuid.UUID, email, name, role string) (*TokenPair, error) {
+// RevocationEnabled reports whether revocation is checked on ValidateAccessToken/ValidateRefreshToken (revoker is non-nil).
+func (j *JWTServiceAsymmetric) RevocationEnabled() bool {
+	return j.revoker != nil
+}
+
+// SetStrictKid when true rejects tokens that do not include a non-empty kid in the header (no fallback to primary key).
+func (j *JWTServiceAsymmetric) SetStrictKid(strict bool) {
+	j.strictKid.Store(strict)
+}
+
+// StrictKid returns whether tokens without kid header are rejected.
+func (j *JWTServiceAsymmetric) StrictKid() bool {
+	return j.strictKid.Load()
+}
+
+// GenerateTokenPair issues a new access and refresh token pair with unique JTIs and the given user id and role.
+func (j *JWTServiceAsymmetric) GenerateTokenPair(ctx context.Context, userID uuid.UUID, role string) (*TokenPair, error) {
 	now := time.Now()
 	accessExpiry := now.Add(j.accessTTL)
 	refreshExpiry := now.Add(j.refreshTTL)
 	accessJTI := uuid.New().String()
 	refreshJTI := uuid.New().String()
 
+	accessReg := jwt.RegisteredClaims{
+		ID:        accessJTI,
+		ExpiresAt: jwt.NewNumericDate(accessExpiry),
+		IssuedAt:  jwt.NewNumericDate(now),
+		NotBefore: jwt.NewNumericDate(now),
+		Issuer:    j.issuer,
+	}
+	if j.audience != "" {
+		accessReg.Audience = jwt.ClaimStrings{j.audience}
+	}
 	accessClaims := &CustomClaims{
-		UserID:    userID.String(),
-		Email:     email,
-		FullName:  name,
-		Role:      role,
-		TokenType: TokenTypeAccess,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ID:        accessJTI,
-			ExpiresAt: jwt.NewNumericDate(accessExpiry),
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			Issuer:    j.issuer,
-		},
+		UserID:           userID.String(),
+		Role:             role,
+		TokenType:        TokenTypeAccess,
+		RegisteredClaims: accessReg,
+	}
+	refreshReg := jwt.RegisteredClaims{
+		ID:        refreshJTI,
+		ExpiresAt: jwt.NewNumericDate(refreshExpiry),
+		IssuedAt:  jwt.NewNumericDate(now),
+		NotBefore: jwt.NewNumericDate(now),
+		Issuer:    j.issuer,
+	}
+	if j.audience != "" {
+		refreshReg.Audience = jwt.ClaimStrings{j.audience}
 	}
 	refreshClaims := &CustomClaims{
-		UserID:    userID.String(),
-		Email:     email,
-		FullName:  name,
-		Role:      role,
-		TokenType: TokenTypeRefresh,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ID:        refreshJTI,
-			ExpiresAt: jwt.NewNumericDate(refreshExpiry),
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			Issuer:    j.issuer,
-		},
+		UserID:           userID.String(),
+		Role:             role,
+		TokenType:        TokenTypeRefresh,
+		RegisteredClaims: refreshReg,
 	}
 
 	accessEntry := j.accessKeys[0]
@@ -200,35 +275,81 @@ func (j *JWTServiceAsymmetric) GenerateTokenPair(ctx context.Context, userID uui
 	}, nil
 }
 
-// ValidateAccessToken parses and validates an access token; checks signature, issuer, type, and revocation.
+// ValidateAccessToken parses the token and validates signature, issuer, audience (if set), token type, and revocation (if revoker is set).
 func (j *JWTServiceAsymmetric) ValidateAccessToken(ctx context.Context, tokenString string) (*CustomClaims, error) {
-	return j.validateToken(ctx, tokenString, TokenTypeAccess, j.accessPrimaryKid, j.accessPublicByKid)
+	return j.validateToken(ctx, tokenString, TokenTypeAccess, j.accessPrimaryKid, j.accessPublicByKid, j.accessValidMethods)
 }
 
-// ValidateRefreshToken parses and validates a refresh token; checks signature, issuer, type, and revocation.
+// ValidateRefreshToken parses the token and validates signature, issuer, audience (if set), token type, and revocation (if revoker is set).
 func (j *JWTServiceAsymmetric) ValidateRefreshToken(ctx context.Context, tokenString string) (*CustomClaims, error) {
-	return j.validateToken(ctx, tokenString, TokenTypeRefresh, j.refreshPrimaryKid, j.refreshPublicByKid)
+	return j.validateToken(ctx, tokenString, TokenTypeRefresh, j.refreshPrimaryKid, j.refreshPublicByKid, j.refreshValidMethods)
 }
 
-func (j *JWTServiceAsymmetric) validateToken(ctx context.Context, tokenString, tokenType, primaryKid string, publicByKid map[string]crypto.PublicKey) (*CustomClaims, error) {
+func buildValidMethodsFromKeys(keys []AsymmetricKeyEntry) []string {
+	m := make(map[string]struct{})
+	for _, k := range keys {
+		method, err := signingMethodForKey(k.PrivateKey)
+		if err != nil {
+			continue
+		}
+		m[method.Alg()] = struct{}{}
+	}
+	out := make([]string, 0, len(m))
+	for s := range m {
+		out = append(out, s)
+	}
+	return out
+}
+
+func (j *JWTServiceAsymmetric) validateToken(ctx context.Context, tokenString, tokenType, primaryKid string, publicByKid map[string]crypto.PublicKey, validMethods []string) (*CustomClaims, error) {
+	opts := []jwt.ParserOption{
+		jwt.WithIssuer(j.issuer),
+		jwt.WithValidMethods(validMethods),
+		jwt.WithExpirationRequired(),
+	}
+	if j.audience != "" {
+		opts = append(opts, jwt.WithAudience(j.audience))
+	}
 	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (any, error) {
-		switch token.Method.(type) {
-		case *jwt.SigningMethodRSA, *jwt.SigningMethodECDSA, *jwt.SigningMethodEd25519:
-			kid := primaryKid
-			if k, ok := token.Header["kid"].(string); ok && k != "" {
-				kid = k
+		if j.strictKid.Load() {
+			k, ok := token.Header["kid"].(string)
+			if !ok || k == "" {
+				return nil, fmt.Errorf("token missing kid header")
 			}
-			key, ok := publicByKid[kid]
-			if !ok {
-				return nil, fmt.Errorf("unknown key id %q", kid)
+		}
+		kid := primaryKid
+		if k, ok := token.Header["kid"].(string); ok && k != "" {
+			kid = k
+		}
+		key, ok := publicByKid[kid]
+		if !ok {
+			return nil, fmt.Errorf("invalid token")
+		}
+		switch token.Method.(type) {
+		case *jwt.SigningMethodRSA:
+			if _, ok := key.(*rsa.PublicKey); !ok {
+				return nil, fmt.Errorf("key type mismatch for RSA")
+			}
+			return key, nil
+		case *jwt.SigningMethodECDSA:
+			if _, ok := key.(*ecdsa.PublicKey); !ok {
+				return nil, fmt.Errorf("key type mismatch for ECDSA")
+			}
+			return key, nil
+		case *jwt.SigningMethodEd25519:
+			if _, ok := key.(ed25519.PublicKey); !ok {
+				return nil, fmt.Errorf("key type mismatch for EdDSA")
 			}
 			return key, nil
 		default:
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			return nil, fmt.Errorf("unexpected signing method")
 		}
-	}, jwt.WithIssuer(j.issuer))
+	}, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate %s token: %w", tokenType, err)
+	}
+	if token == nil {
+		return nil, fmt.Errorf("failed to validate %s token: invalid token", tokenType)
 	}
 	claims, ok := token.Claims.(*CustomClaims)
 	if !ok || !token.Valid {
@@ -244,64 +365,36 @@ func (j *JWTServiceAsymmetric) validateToken(ctx context.Context, tokenString, t
 }
 
 func (j *JWTServiceAsymmetric) checkRevocation(ctx context.Context, claims *CustomClaims) error {
-	if claims.ID == "" {
-		return fmt.Errorf("token missing jti claim")
-	}
-	if j.revoker == nil {
-		return nil
-	}
-	revoked, err := j.revoker.IsRevoked(ctx, claims.ID)
-	if err != nil {
-		return fmt.Errorf("revocation check: %w", err)
-	}
-	if revoked {
-		return fmt.Errorf("token revoked")
-	}
-	userID, err := uuid.Parse(claims.UserID)
-	if err != nil {
-		return fmt.Errorf("invalid user_id in claims: %w", err)
-	}
-	var issuedAt int64
-	if claims.IssuedAt != nil {
-		issuedAt = claims.IssuedAt.Unix()
-	}
-	userRevoked, err := j.revoker.IsUserRevoked(ctx, userID, issuedAt)
-	if err != nil {
-		return fmt.Errorf("user revocation check: %w", err)
-	}
-	if userRevoked {
-		return fmt.Errorf("token revoked")
-	}
-	return nil
+	return checkRevocationWithStore(ctx, claims, j.revoker)
 }
 
-// RevokeRefreshToken invalidates the given refresh token via the revocation store.
+// RevokeRefreshToken validates the refresh token then marks its JTI as revoked. TTL for the revocation key is until token expiry or refreshTTL. Returns ErrTokenInvalid when the token is expired, malformed, or invalid; ErrTokenCannotRevoke when the token has no JTI.
 func (j *JWTServiceAsymmetric) RevokeRefreshToken(ctx context.Context, refreshTokenString string) error {
 	claims, err := j.ValidateRefreshToken(ctx, refreshTokenString)
 	if err != nil {
-		return fmt.Errorf("jwt revoke: %w", err)
+		return ErrTokenInvalid
 	}
-	if claims.ID == "" || j.revoker == nil {
-		return nil
+	if claims.ID == "" {
+		return ErrTokenCannotRevoke
 	}
-	ttl := j.refreshTTL
-	if claims.ExpiresAt != nil {
-		ttl = time.Until(claims.ExpiresAt.Time)
-		if ttl <= 0 {
-			ttl = j.refreshTTL
-		}
+	if j.revoker == nil {
+		return ErrRevokerRequired
 	}
+	ttl := revocationTTL(claims, j.refreshTTL)
 	return j.revoker.Revoke(ctx, claims.ID, ttl)
 }
 
-// RevokeAccessToken invalidates the given access token. Returns nil if the token is already invalid.
+// RevokeAccessToken validates the access token then marks its JTI as revoked. Returns ErrTokenInvalid when the token is invalid.
 func (j *JWTServiceAsymmetric) RevokeAccessToken(ctx context.Context, accessTokenString string) error {
 	claims, err := j.ValidateAccessToken(ctx, accessTokenString)
 	if err != nil {
-		return nil
+		return ErrTokenInvalid
 	}
-	if claims.ID == "" || j.revoker == nil {
-		return nil
+	if claims.ID == "" {
+		return ErrTokenCannotRevoke
+	}
+	if j.revoker == nil {
+		return ErrRevokerRequired
 	}
 	ttl := j.accessTTL
 	if claims.ExpiresAt != nil {
@@ -313,10 +406,10 @@ func (j *JWTServiceAsymmetric) RevokeAccessToken(ctx context.Context, accessToke
 	return j.revoker.Revoke(ctx, claims.ID, ttl)
 }
 
-// RevokeAllForUser invalidates all tokens issued to the user (e.g. after password change).
+// RevokeAllForUser stores a user revocation timestamp so any token issued at or before that time is considered revoked.
 func (j *JWTServiceAsymmetric) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
 	if j.revoker == nil {
-		return nil
+		return ErrRevokerRequired
 	}
 	ttl := j.refreshTTL
 	if j.accessTTL > ttl {
@@ -325,37 +418,20 @@ func (j *JWTServiceAsymmetric) RevokeAllForUser(ctx context.Context, userID uuid
 	return j.revoker.RevokeUserTokens(ctx, userID, ttl)
 }
 
-// RefreshTokens validates the refresh token, revokes it, and issues a new token pair. Uses UserRoleLookup if set.
+// RefreshTokens validates the refresh token, atomically revokes it (RevokeIfFirst), and issues a new token pair. Uses UserRoleLookup if set. Returns ErrRevokerRequired if revoker is nil.
 func (j *JWTServiceAsymmetric) RefreshTokens(ctx context.Context, refreshTokenString string) (*TokenPair, error) {
+	if j.revoker == nil {
+		return nil, ErrRevokerRequired
+	}
 	claims, err := j.ValidateRefreshToken(ctx, refreshTokenString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate refresh token: %w", err)
 	}
-	if j.revoker != nil && claims.ID != "" {
-		ttl := j.refreshTTL
-		if claims.ExpiresAt != nil {
-			ttl = time.Until(claims.ExpiresAt.Time)
-			if ttl <= 0 {
-				ttl = j.refreshTTL
-			}
-		}
-		if err := j.revoker.Revoke(ctx, claims.ID, ttl); err != nil {
-			return nil, fmt.Errorf("failed to revoke old refresh token: %w", err)
-		}
+	var fn *UserRoleLookup
+	if loaded := j.userRoleLookup.Load(); loaded != nil && *loaded != nil {
+		fn = loaded
 	}
-	userID, err := uuid.Parse(claims.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid user ID in token claims: %w", err)
-	}
-	email, name, role := claims.Email, claims.FullName, claims.Role
-	if fn := j.userRoleLookup.Load(); fn != nil {
-		freshEmail, freshName, freshRole, lookupErr := (*fn)(ctx, userID)
-		if lookupErr != nil {
-			return nil, fmt.Errorf("failed to lookup user role during refresh: %w", lookupErr)
-		}
-		email, name, role = freshEmail, freshName, freshRole
-	}
-	return j.GenerateTokenPair(ctx, userID, email, name, role)
+	return refreshTokensFromClaims(ctx, claims, j.revoker, j.refreshTTL, fn, j.GenerateTokenPair)
 }
 
 func signingMethodForKey(priv crypto.PrivateKey) (jwt.SigningMethod, error) {
@@ -365,6 +441,9 @@ func signingMethodForKey(priv crypto.PrivateKey) (jwt.SigningMethod, error) {
 	case ed25519.PrivateKey:
 		return jwt.SigningMethodEdDSA, nil
 	case *ecdsa.PrivateKey:
+		if k.Curve == nil {
+			return nil, fmt.Errorf("ECDSA private key requires non-nil Curve")
+		}
 		switch k.Curve.Params().Name {
 		case "P-256":
 			return jwt.SigningMethodES256, nil

@@ -9,7 +9,7 @@ packages:
     interfaces:
       RevocationStore:
         config:
-          dir: "mocks"
+          dir: "mock"
           filename: "RevocationStore.go"
-          pkgname: "mocks"
+          pkgname: "mock"
           structname: "MockRevocationStore"
