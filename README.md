@@ -1,5 +1,9 @@
 # go-jwtkit
 
+[![CI](https://github.com/TakuyaYagam1/go-jwtkit/actions/workflows/ci.yml/badge.svg)](https://github.com/TakuyaYagam1/go-jwtkit/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/TakuyaYagam1/go-jwtkit.svg)](https://pkg.go.dev/github.com/TakuyaYagam1/go-jwtkit)
+[![Go Report Card](https://goreportcard.com/badge/github.com/TakuyaYagam1/go-jwtkit)](https://goreportcard.com/report/github.com/TakuyaYagam1/go-jwtkit)
+
 JWT issuance, validation, and revocation for access/refresh token pairs.
 
 ## Install
