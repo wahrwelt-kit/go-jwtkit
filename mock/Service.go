@@ -7,7 +7,7 @@ package mock
 import (
 	"context"
 
-	"github.com/TakuyaYagam1/go-jwtkit"
+	"github.com/takuya-go-kit/go-jwtkit"
 	"github.com/google/uuid"
 	mock "github.com/stretchr/testify/mock"
 )

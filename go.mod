@@ -1,14 +1,14 @@
-module github.com/TakuyaYagam1/go-jwtkit
+module github.com/takuya-go-kit/go-jwtkit
 
 go 1.25.0
 
 require (
-	github.com/TakuyaYagam1/go-logkit v0.2.0
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/stretchr/testify v1.11.1
+	github.com/takuya-go-kit/go-logkit v0.2.0
 )
 
 require (
@@ -25,3 +25,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/takuya-go-kit/go-logkit => ../go-logkit

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	logger "github.com/TakuyaYagam1/go-logkit"
+	logger "github.com/takuya-go-kit/go-logkit"
 )
 
 // MiddlewareOption configures JWTAuth (e.g. custom error response via WithErrorHandler, logging via WithLogger).

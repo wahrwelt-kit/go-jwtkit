@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	logmock "github.com/TakuyaYagam1/go-logkit/mock"
+	logmock "github.com/takuya-go-kit/go-logkit/mock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

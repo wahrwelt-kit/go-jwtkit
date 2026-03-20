@@ -1,19 +1,19 @@
 # go-jwtkit
 
-[![CI](https://github.com/TakuyaYagam1/go-jwtkit/actions/workflows/ci.yml/badge.svg)](https://github.com/TakuyaYagam1/go-jwtkit/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/TakuyaYagam1/go-jwtkit.svg)](https://pkg.go.dev/github.com/TakuyaYagam1/go-jwtkit)
-[![Go Report Card](https://goreportcard.com/badge/github.com/TakuyaYagam1/go-jwtkit)](https://goreportcard.com/report/github.com/TakuyaYagam1/go-jwtkit)
+[![CI](https://github.com/takuya-go-kit/go-jwtkit/actions/workflows/ci.yml/badge.svg)](https://github.com/takuya-go-kit/go-jwtkit/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/takuya-go-kit/go-jwtkit.svg)](https://pkg.go.dev/github.com/takuya-go-kit/go-jwtkit)
+[![Go Report Card](https://goreportcard.com/badge/github.com/takuya-go-kit/go-jwtkit)](https://goreportcard.com/report/github.com/takuya-go-kit/go-jwtkit)
 
 JWT issuance, validation, and revocation for access/refresh token pairs.
 
 ## Install
 
 ```bash
-go get github.com/TakuyaYagam1/go-jwtkit
+go get github.com/takuya-go-kit/go-jwtkit
 ```
 
 ```go
-import "github.com/TakuyaYagam1/go-jwtkit"
+import "github.com/takuya-go-kit/go-jwtkit"
 ```
 
 ## Features
