@@ -3,7 +3,7 @@ module github.com/TakuyaYagam1/go-jwtkit
 go 1.25.0
 
 require (
-	github.com/TakuyaYagam1/go-logkit v0.2.0
+	github.com/TakuyaYagam1/go-logkit v0.2.1
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
