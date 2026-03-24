@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/stretchr/testify v1.11.1
-	github.com/wahrwelt-kit/go-logkit v0.2.0
+	github.com/wahrwelt-kit/go-logkit v0.4.0
 )
 
 require (
@@ -25,5 +25,3 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/wahrwelt-kit/go-logkit => ../go-logkit
