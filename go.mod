@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/stretchr/testify v1.11.1
-	github.com/wahrwelt-kit/go-logkit v0.4.0
+	github.com/wahrwelt-kit/go-logkit v0.4.1
 )
 
 require (
