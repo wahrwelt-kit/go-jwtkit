@@ -74,7 +74,7 @@ func TestJWTAuth_Middleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -84,10 +84,10 @@ func TestJWTAuth_Middleware(t *testing.T) {
 func TestJWTAuth_NoToken_401(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
-	handler := JWTAuth(svc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWTAuth(svc)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -96,10 +96,10 @@ func TestJWTAuth_NoToken_401(t *testing.T) {
 func TestJWTAuth_InvalidToken_401(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
-	handler := JWTAuth(svc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWTAuth(svc)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "Bearer invalid.jwt.token")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -108,10 +108,10 @@ func TestJWTAuth_InvalidToken_401(t *testing.T) {
 
 func TestJWTAuth_NilService_500(t *testing.T) {
 	t.Parallel()
-	handler := JWTAuth(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWTAuth(nil)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -121,10 +121,10 @@ func TestJWTAuth_WithLogger_NilService_500(t *testing.T) {
 	t.Parallel()
 	l := logmock.NewMockLogger(t)
 	l.On("Error", "jwt: JWTAuth nil Service (misconfigured), returning 500").Return()
-	handler := JWTAuth(nil, WithLogger(l))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWTAuth(nil, WithLogger(l))(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -134,13 +134,13 @@ func TestJWTAuth_WithLogger_NilService_500(t *testing.T) {
 func TestJWTAuth_WithErrorHandler_NilService(t *testing.T) {
 	t.Parallel()
 	var capturedStatus int
-	handler := JWTAuth(nil, WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error, status int) {
+	handler := JWTAuth(nil, WithErrorHandler(func(w http.ResponseWriter, _ *http.Request, _ error, status int) {
 		capturedStatus = status
 		w.WriteHeader(status)
-	}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, capturedStatus)
@@ -150,13 +150,13 @@ func TestJWTAuth_WithErrorHandler_NoToken(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, nil)
 	var capturedStatus int
-	handler := JWTAuth(svc, WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error, status int) {
+	handler := JWTAuth(svc, WithErrorHandler(func(w http.ResponseWriter, _ *http.Request, _ error, status int) {
 		capturedStatus = status
 		w.WriteHeader(status)
-	}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, capturedStatus)
@@ -167,14 +167,14 @@ func TestJWTAuth_WithErrorHandler_InvalidToken(t *testing.T) {
 	svc := newTestService(t, nil)
 	var capturedStatus int
 	var capturedErr error
-	handler := JWTAuth(svc, WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error, status int) {
+	handler := JWTAuth(svc, WithErrorHandler(func(w http.ResponseWriter, _ *http.Request, err error, status int) {
 		capturedStatus = status
 		capturedErr = err
 		w.WriteHeader(status)
-	}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "Bearer invalid.token.here")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

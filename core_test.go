@@ -124,12 +124,45 @@ func TestCore_SetStrictKid_StrictKid(t *testing.T) {
 	assert.False(t, c.StrictKid())
 }
 
+func TestCore_RefreshTokens_ReplayedToken_ReturnsErrRefreshTokenReplayed(t *testing.T) {
+	t.Parallel()
+	userID := uuid.New()
+	revoker := &neverFirstRevoker{}
+	claims := &CustomClaims{UserID: userID.String(), TokenType: TokenTypeRefresh}
+	claims.ID = "jti-replay"
+	c := newCore(
+		func(_ context.Context, _ string) (*CustomClaims, error) { return nil, nil },
+		func(_ context.Context, _ string) (*CustomClaims, error) { return claims, nil },
+		func(_ context.Context, _ uuid.UUID, _ string) (*TokenPair, error) { return &TokenPair{}, nil },
+		revoker, nil, false, time.Hour, time.Hour,
+	)
+	_, err := c.RefreshTokens(context.Background(), "token")
+	assert.ErrorIs(t, err, ErrRefreshTokenReplayed)
+}
+
+// neverFirstRevoker simulates a lost RevokeIfFirst race (concurrent refresh replay)
+type neverFirstRevoker struct{}
+
+func (r *neverFirstRevoker) Revoke(_ context.Context, _ string, _ time.Duration) error {
+	return nil
+}
+func (r *neverFirstRevoker) RevokeIfFirst(_ context.Context, _ string, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (r *neverFirstRevoker) IsRevoked(_ context.Context, _ string) (bool, error) { return false, nil }
+func (r *neverFirstRevoker) RevokeUserTokens(_ context.Context, _ uuid.UUID, _ time.Duration) error {
+	return nil
+}
+func (r *neverFirstRevoker) IsUserRevoked(_ context.Context, _ uuid.UUID, _ int64) (bool, error) {
+	return false, nil
+}
+
 func TestCore_GenerateTokenPair_DelegatesToCallback(t *testing.T) {
 	t.Parallel()
 	want := &TokenPair{AccessToken: "a", RefreshToken: "r", AccessExpiresAt: 1, RefreshExpiresAt: 2}
 	c := newCore(
 		nil, nil,
-		func(_ context.Context, uid uuid.UUID, role string) (*TokenPair, error) {
+		func(_ context.Context, _ uuid.UUID, role string) (*TokenPair, error) {
 			assert.Equal(t, "admin", role)
 			return want, nil
 		},

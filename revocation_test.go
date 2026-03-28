@@ -297,8 +297,7 @@ func TestRedisRevocationStore_RevokeUserTokens_NilUUID(t *testing.T) {
 	db, _ := redismock.NewClientMock()
 	store := NewRedisRevocationStore(db)
 	err := store.RevokeUserTokens(context.Background(), uuid.Nil, time.Hour)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user id is required")
+	require.ErrorIs(t, err, ErrNilUserID)
 }
 
 func TestRedisRevocationStore_RevokeUserTokens_RedisError(t *testing.T) {

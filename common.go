@@ -63,7 +63,7 @@ func checkRevocationWithStore(ctx context.Context, claims *CustomClaims, revoker
 		return nil
 	}
 	if claims.ID == "" {
-		return fmt.Errorf("token missing jti claim")
+		return ErrTokenCannotRevoke
 	}
 	userID, err := uuid.Parse(claims.UserID)
 	if err != nil {
@@ -101,7 +101,7 @@ func refreshTokensFromClaims(
 	generatePair tokenPairGenerator,
 ) (*TokenPair, error) {
 	if claims.ID == "" {
-		return nil, fmt.Errorf("refresh token missing jti claim")
+		return nil, ErrTokenCannotRevoke
 	}
 	ttl := revocationTTL(claims, refreshTTL)
 	first, err := revoker.RevokeIfFirst(ctx, claims.ID, ttl)
@@ -109,7 +109,7 @@ func refreshTokensFromClaims(
 		return nil, fmt.Errorf("failed to revoke old refresh token: %w", err)
 	}
 	if !first {
-		return nil, fmt.Errorf("refresh token already used")
+		return nil, ErrRefreshTokenReplayed
 	}
 	userID, err := uuid.Parse(claims.UserID)
 	if err != nil {

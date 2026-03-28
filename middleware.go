@@ -7,7 +7,7 @@ import (
 	logger "github.com/wahrwelt-kit/go-logkit"
 )
 
-// MiddlewareOption configures JWTAuth (e.g. custom error response via WithErrorHandler, logging via WithLogger).
+// MiddlewareOption configures JWTAuth (e.g. custom error response via WithErrorHandler, logging via WithLogger)
 type MiddlewareOption func(*middlewareConfig)
 
 type middlewareConfig struct {
@@ -15,23 +15,24 @@ type middlewareConfig struct {
 	logger       logger.Logger
 }
 
-// WithErrorHandler sets a custom handler for auth errors (missing/invalid token or nil service).
-// status is http.StatusUnauthorized (401) for missing or invalid token, or http.StatusInternalServerError (500) for nil service.
-// If not set, the middleware uses default JSON error responses and WWW-Authenticate: Bearer for 401.
+// WithErrorHandler sets a custom handler for auth errors (missing/invalid token or nil service)
+// status is http.StatusUnauthorized (401) for missing or invalid token, or http.StatusInternalServerError (500) for nil service
+// If not set, the middleware uses default JSON error responses and WWW-Authenticate: Bearer for 401
 func WithErrorHandler(fn func(w http.ResponseWriter, r *http.Request, err error, status int)) MiddlewareOption {
 	return func(c *middlewareConfig) { c.errorHandler = fn }
 }
 
-// WithLogger sets the logger for the middleware. Used to log nil-Service misconfiguration (500 response).
+// WithLogger sets the logger for the middleware. When set, logs a structured error if JWTAuth is called
+// with a nil Service (which results in a 500 response). Has no effect when WithErrorHandler is also set
 func WithLogger(l logger.Logger) MiddlewareOption {
 	return func(c *middlewareConfig) { c.logger = l }
 }
 
-// JWTAuth returns chi-style middleware: func(http.Handler) http.Handler.
+// JWTAuth returns chi-style middleware: func(http.Handler) http.Handler
 // It extracts the Bearer token via ExtractRaw, validates it with svc.ValidateAccessToken,
-// stores claims in the request context, and calls next.
-// On missing or invalid token responds with 401 JSON and WWW-Authenticate: Bearer; on nil svc responds with 500 and logs via WithLogger.
-// Use as r.Use(jwtkit.JWTAuth(svc)) or r.With(jwtkit.JWTAuth(svc, jwtkit.WithLogger(log))).Handle(...).
+// stores claims in the request context, and calls next
+// On missing or invalid token responds with 401 JSON and WWW-Authenticate: Bearer; on nil svc responds with 500 and logs via WithLogger
+// Use as r.Use(jwtkit.JWTAuth(svc)) or r.With(jwtkit.JWTAuth(svc, jwtkit.WithLogger(log))).Handle(...)
 func JWTAuth(svc Service, opts ...MiddlewareOption) func(http.Handler) http.Handler {
 	var cfg middlewareConfig
 	for _, opt := range opts {

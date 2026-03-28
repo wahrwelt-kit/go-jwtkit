@@ -26,55 +26,55 @@ return 'OK'
 `
 
 var (
-	// ErrEmptyJTI is returned by Revoke when jti is empty.
+	// ErrEmptyJTI is returned by Revoke when jti is empty
 	ErrEmptyJTI = errors.New("jwt: jti is required for revocation")
-	// ErrNoRedisClient is returned when the Redis client is nil.
+	// ErrNoRedisClient is returned when the Redis client is nil
 	ErrNoRedisClient = errors.New("jwt: redis client is required")
 )
 
-// RevocationStore persists revoked JTIs and user revocation timestamps.
-// Used for token blacklisting and refresh token one-time-use (RevokeIfFirst) replay protection.
-// Implementations must be safe for concurrent use.
+// RevocationStore persists revoked JTIs and user revocation timestamps
+// Used for token blacklisting and refresh token one-time-use (RevokeIfFirst) replay protection
+// Implementations must be safe for concurrent use
 type RevocationStore interface {
-	// Revoke marks the JTI as revoked for the given TTL.
+	// Revoke marks the JTI as revoked for the given TTL
 	Revoke(ctx context.Context, jti string, ttl time.Duration) error
-	// RevokeIfFirst marks the JTI as revoked only if not already revoked (atomic). Returns true if this call was the first. Used for refresh token one-time use.
+	// RevokeIfFirst marks the JTI as revoked only if not already revoked (atomic). Returns true if this call was the first. Used for refresh token one-time use
 	RevokeIfFirst(ctx context.Context, jti string, ttl time.Duration) (first bool, err error)
-	// IsRevoked reports whether the JTI is currently revoked.
+	// IsRevoked reports whether the JTI is currently revoked
 	IsRevoked(ctx context.Context, jti string) (bool, error)
-	// RevokeUserTokens stores a timestamp so tokens issued at or before that time are considered revoked.
+	// RevokeUserTokens stores a timestamp so tokens issued at or before that time are considered revoked
 	RevokeUserTokens(ctx context.Context, userID uuid.UUID, ttl time.Duration) error
-	// IsUserRevoked returns true if issuedAt is at or before the user's revocation timestamp.
+	// IsUserRevoked returns true if issuedAt is at or before the user's revocation timestamp
 	IsUserRevoked(ctx context.Context, userID uuid.UUID, issuedAt int64) (bool, error)
 }
 
-// RedisRevocationStore implements RevocationStore using Redis with TTL on keys.
-// Nil client causes all methods to return ErrNoRedisClient.
-// Accepts redis.Cmdable so *redis.Client, *redis.ClusterClient, and *redis.FailoverClient are supported.
+// RedisRevocationStore implements RevocationStore using Redis with TTL on keys
+// Nil client causes all methods to return ErrNoRedisClient
+// Accepts redis.Cmdable so *redis.Client, *redis.ClusterClient, and *redis.FailoverClient are supported
 type RedisRevocationStore struct {
 	client    redis.Cmdable
 	keyPrefix string
 	nowFunc   func() time.Time
 }
 
-// RedisRevocationStoreOption configures RedisRevocationStore (e.g. key prefix, time source for tests).
+// RedisRevocationStoreOption configures RedisRevocationStore (e.g. key prefix, time source for tests)
 type RedisRevocationStoreOption func(*RedisRevocationStore)
 
-// WithRevocationKeyPrefix sets the prefix prepended to all Redis keys.
-// Use to isolate multiple services or environments sharing the same Redis instance.
+// WithRevocationKeyPrefix sets the prefix prepended to all Redis keys
+// Use to isolate multiple services or environments sharing the same Redis instance
 func WithRevocationKeyPrefix(prefix string) RedisRevocationStoreOption {
 	return func(s *RedisRevocationStore) { s.keyPrefix = prefix }
 }
 
-// WithRevocationNowFunc sets the time source for user revocation timestamps (RevokeUserTokens, IsUserRevoked).
-// Use in tests to control time; in production the default is time.Now. Do not modify the store after construction.
+// WithRevocationNowFunc sets the time source for user revocation timestamps (RevokeUserTokens, IsUserRevoked)
+// Use in tests to control time; in production the default is time.Now. Do not modify the store after construction
 func WithRevocationNowFunc(fn func() time.Time) RedisRevocationStoreOption {
 	return func(s *RedisRevocationStore) { s.nowFunc = fn }
 }
 
-// NewRedisRevocationStore returns a revocation store backed by the given Redis client.
-// client may be *redis.Client, *redis.ClusterClient, or *redis.FailoverClient.
-// Options can set key prefix (WithRevocationKeyPrefix) or time source for tests (WithRevocationNowFunc).
+// NewRedisRevocationStore returns a revocation store backed by the given Redis client
+// may be *redis.Client, *redis.ClusterClient, or *redis.FailoverClient
+// Options can set key prefix (WithRevocationKeyPrefix) or time source for tests (WithRevocationNowFunc)
 func NewRedisRevocationStore(client redis.Cmdable, opts ...RedisRevocationStoreOption) *RedisRevocationStore {
 	s := &RedisRevocationStore{client: client}
 	for _, opt := range opts {
@@ -83,9 +83,9 @@ func NewRedisRevocationStore(client redis.Cmdable, opts ...RedisRevocationStoreO
 	return s
 }
 
-// Revoke marks the JTI as revoked for the specified TTL (key expires after TTL).
-// Returns ErrEmptyJTI if jti is empty; ErrNoRedisClient if client is nil.
-// TTL below 1 second is clamped to 7 days.
+// Revoke marks the JTI as revoked for the specified TTL (key expires after TTL)
+// Returns ErrEmptyJTI if jti is empty; ErrNoRedisClient if client is nil
+// TTL below 1 second is clamped to 7 days
 func (s *RedisRevocationStore) Revoke(ctx context.Context, jti string, ttl time.Duration) error {
 	if jti == "" {
 		return ErrEmptyJTI
@@ -100,9 +100,9 @@ func (s *RedisRevocationStore) Revoke(ctx context.Context, jti string, ttl time.
 	return s.client.Set(ctx, key, "1", ttl).Err()
 }
 
-// RevokeIfFirst marks the JTI as revoked only if not already present (Redis SET NX, atomic).
-// Returns (true, nil) if this call was the first; (false, nil) if already revoked (e.g. refresh replay).
-// TTL below 1 second is clamped to 7 days. Returns ErrEmptyJTI or ErrNoRedisClient when applicable.
+// RevokeIfFirst marks the JTI as revoked only if not already present (Redis SET NX, atomic)
+// Returns (true, nil) if this call was the first; (false, nil) if already revoked (e.g. refresh replay)
+// TTL below 1 second is clamped to 7 days. Returns ErrEmptyJTI or ErrNoRedisClient when applicable
 func (s *RedisRevocationStore) RevokeIfFirst(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
 	if jti == "" {
 		return false, ErrEmptyJTI
@@ -121,8 +121,8 @@ func (s *RedisRevocationStore) RevokeIfFirst(ctx context.Context, jti string, tt
 	return ok, nil
 }
 
-// IsRevoked reports whether the JTI is currently in the store (revoked).
-// Returns (false, nil) if not found; (true, nil) if revoked; error on Redis failure or ErrNoRedisClient / ErrEmptyJTI.
+// IsRevoked reports whether the JTI is currently in the store (revoked)
+// Returns (false, nil) if not found; (true, nil) if revoked; error on Redis failure or ErrNoRedisClient / ErrEmptyJTI
 func (s *RedisRevocationStore) IsRevoked(ctx context.Context, jti string) (bool, error) {
 	if s == nil || s.client == nil {
 		return false, ErrNoRedisClient
@@ -138,15 +138,15 @@ func (s *RedisRevocationStore) IsRevoked(ctx context.Context, jti string) (bool,
 	return n > 0, nil
 }
 
-// RevokeUserTokens stores a revocation timestamp for the user; tokens with issuedAt <= that time are considered revoked.
-// Only updates if the new timestamp is >= current (atomic Lua script). TTL below 1 second is clamped to 7 days.
-// Returns an error if userID is uuid.Nil or Redis fails; ErrNoRedisClient if client is nil.
+// RevokeUserTokens stores a revocation timestamp for the user; tokens with issuedAt <= that time are considered revoked
+// Only updates if the new timestamp is >= current (atomic Lua script). TTL below 1 second is clamped to 7 days
+// Returns an error if userID is uuid.Nil or Redis fails; ErrNoRedisClient if client is nil
 func (s *RedisRevocationStore) RevokeUserTokens(ctx context.Context, userID uuid.UUID, ttl time.Duration) error {
 	if s == nil || s.client == nil {
 		return ErrNoRedisClient
 	}
 	if userID == uuid.Nil {
-		return fmt.Errorf("jwt: user id is required for RevokeUserTokens")
+		return ErrNilUserID
 	}
 	if ttl < time.Second {
 		ttl = time.Hour * 24 * 7
@@ -157,16 +157,13 @@ func (s *RedisRevocationStore) RevokeUserTokens(ctx context.Context, userID uuid
 		now = s.nowFunc
 	}
 	ts := strconv.FormatInt(now().Unix(), 10)
-	sec := int(ttl.Seconds())
-	if sec < 1 {
-		sec = 1
-	}
+	sec := max(int(ttl.Seconds()), 1)
 	return s.client.Eval(ctx, revokeUserTokensScript, []string{key}, ts, sec).Err()
 }
 
 // IsUserRevoked returns true if issuedAt is at or before the user's stored revocation timestamp
-// (i.e. the token should be treated as revoked). Returns (false, nil) if no timestamp is stored.
-// Returns ErrNoRedisClient if client is nil.
+// (i.e. the token should be treated as revoked). Returns (false, nil) if no timestamp is stored
+// Returns ErrNoRedisClient if client is nil
 func (s *RedisRevocationStore) IsUserRevoked(ctx context.Context, userID uuid.UUID, issuedAt int64) (bool, error) {
 	if s == nil || s.client == nil {
 		return false, ErrNoRedisClient

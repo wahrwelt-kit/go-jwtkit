@@ -39,7 +39,7 @@ func TestJWTService_GenerateTokenPair_Success(t *testing.T) {
 	userID := uuid.New()
 
 	pair, err := service.GenerateTokenPair(context.Background(), userID, "admin")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotEmpty(t, pair.AccessToken)
 	assert.NotEmpty(t, pair.RefreshToken)
 	assert.Greater(t, pair.AccessExpiresAt, time.Now().Unix())
@@ -54,7 +54,7 @@ func TestJWTService_ValidateAccessToken_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	claims, err := service.ValidateAccessToken(context.Background(), pair.AccessToken)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, userID.String(), claims.UserID)
 	assert.Equal(t, "admin", claims.Role)
 	assert.Equal(t, TokenTypeAccess, claims.TokenType)
@@ -72,7 +72,7 @@ func TestJWTService_ValidateAccessToken_InvalidAudience(t *testing.T) {
 	pair, err := svcA.GenerateTokenPair(context.Background(), userID, "user")
 	require.NoError(t, err)
 	claims, err := svcB.ValidateAccessToken(context.Background(), pair.AccessToken)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, claims)
 }
 
@@ -96,7 +96,7 @@ func TestJWTService_ValidateAccessToken_InvalidSignature(t *testing.T) {
 	require.NoError(t, err)
 
 	claims, err := service2.ValidateAccessToken(context.Background(), pair.AccessToken)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, claims)
 }
 
@@ -109,7 +109,7 @@ func TestJWTService_ValidateRefreshToken_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	claims, err := service.ValidateRefreshToken(context.Background(), pair.RefreshToken)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, userID.String(), claims.UserID)
 	assert.Equal(t, TokenTypeRefresh, claims.TokenType)
 }
@@ -161,7 +161,7 @@ func TestJWTService_RefreshTokens_InvalidToken(t *testing.T) {
 	service := newTestService(t, &memoryRevocationStore{})
 
 	newPair, err := service.RefreshTokens(context.Background(), "invalid-token")
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, newPair)
 	assert.Contains(t, err.Error(), "validate refresh token")
 }
@@ -173,7 +173,7 @@ func TestJWTService_NewJWTService_ShortSecret(t *testing.T) {
 		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte("short")}},
 		AccessTTL:   time.Hour, RefreshTTL: time.Hour, Issuer: testIssuer,
 	})
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least")
 }
 
@@ -184,7 +184,7 @@ func TestJWTService_NewJWTService_EmptyIssuer(t *testing.T) {
 		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte(testRefreshSecret)}},
 		AccessTTL:   time.Hour, RefreshTTL: time.Hour, Issuer: "",
 	})
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "issuer")
 }
 
@@ -205,7 +205,7 @@ func TestJWTService_RefreshTokens_RevokesOldToken(t *testing.T) {
 	assert.NotEmpty(t, newPair.RefreshToken)
 
 	_, err = service.ValidateRefreshToken(context.Background(), pair.RefreshToken)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "revoked")
 }
 
@@ -225,7 +225,7 @@ func TestJWTService_RevokeRefreshToken_ThenValidateFails(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = service.ValidateRefreshToken(context.Background(), pair.RefreshToken)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "revoked")
 }
 
@@ -239,7 +239,7 @@ func TestJWTService_RevokeAccessToken_Success(t *testing.T) {
 	err = service.RevokeAccessToken(context.Background(), pair.AccessToken)
 	require.NoError(t, err)
 	_, err = service.ValidateAccessToken(context.Background(), pair.AccessToken)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "revoked")
 }
 
@@ -270,7 +270,7 @@ func TestJWTService_ValidateAccessToken_ExpiredTokenReturnsError(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(2 * time.Millisecond)
 	claims, err := svc.ValidateAccessToken(context.Background(), pair.AccessToken)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, claims)
 }
 
@@ -292,7 +292,7 @@ func TestJWTService_ValidateRefreshToken_ExpiredTokenReturnsError(t *testing.T) 
 	require.NoError(t, err)
 	time.Sleep(2 * time.Millisecond)
 	claims, err := svc.ValidateRefreshToken(context.Background(), pair.RefreshToken)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, claims)
 }
 
@@ -300,7 +300,7 @@ func TestJWTService_SetUserRoleLookup_RefreshUsesFreshRole(t *testing.T) {
 	t.Parallel()
 	service := newTestService(t, &memoryRevocationStore{})
 	userID := uuid.New()
-	service.SetUserRoleLookup(func(ctx context.Context, uid uuid.UUID) (string, error) {
+	service.SetUserRoleLookup(func(_ context.Context, uid uuid.UUID) (string, error) {
 		if uid != userID {
 			return "", errors.New("wrong user")
 		}

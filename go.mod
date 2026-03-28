@@ -1,6 +1,6 @@
 module github.com/wahrwelt-kit/go-jwtkit
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/go-redis/redismock/v9 v9.2.0
@@ -18,7 +18,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/rs/zerolog v1.34.0 // indirect
+	github.com/rs/zerolog v1.35.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect

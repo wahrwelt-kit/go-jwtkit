@@ -33,7 +33,7 @@ func (m *memoryRevocationStore) Revoke(_ context.Context, jti string, _ time.Dur
 	return nil
 }
 
-func (m *memoryRevocationStore) RevokeIfFirst(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
+func (m *memoryRevocationStore) RevokeIfFirst(_ context.Context, jti string, _ time.Duration) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revoked == nil {

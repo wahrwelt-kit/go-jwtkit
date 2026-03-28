@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -15,35 +16,36 @@ import (
 	"github.com/google/uuid"
 )
 
-// AsymmetricKeyEntry holds a key id and a key pair for signing (private) and verification (public).
-// Supported: *rsa.PrivateKey (RS256 only; RS384/RS512 not supported), *ecdsa.PrivateKey (ES256/ES384/ES512 by curve), ed25519.PrivateKey (EdDSA).
-// RSA keys must be at least 2048 bits; ECDSA curves P-256, P-384, P-521. PrivateKey and PublicKey must match and pass validation.
+// AsymmetricKeyEntry holds a key id and a key pair for signing (private) and verification (public)
+// Supported: *rsa.PrivateKey (RS256 only; RS384/RS512 not supported), *ecdsa.PrivateKey (ES256/ES384/ES512 by curve), ed25519.PrivateKey (EdDSA)
+// RSA keys must be at least 2048 bits; ECDSA curves P-256, P-384, P-521. PrivateKey and PublicKey must match and pass validation
 type AsymmetricKeyEntry struct {
-	Kid        string            // Key identifier; non-empty, unique per slice.
-	PrivateKey crypto.PrivateKey // Used for signing; do not modify after passing to NewJWTServiceAsymmetric.
-	PublicKey  crypto.PublicKey  // Used for verification; must match PrivateKey.
+	Kid        string            // Key identifier; non-empty, unique per slice
+	PrivateKey crypto.PrivateKey // Used for signing; do not modify after passing to NewJWTServiceAsymmetric
+	PublicKey  crypto.PublicKey  // Used for verification; must match PrivateKey
 }
 
-// AsymmetricConfig configures NewJWTServiceAsymmetric.
-// Issuer is required; AccessKeys and RefreshKeys must each contain at least one key pair.
-// Revoker and UserRoleLookup may be nil; RefreshTokens requires a non-nil Revoker.
-// StrictKid when true rejects tokens without kid header.
+// AsymmetricConfig configures NewJWTServiceAsymmetric
+// Issuer is required; AccessKeys and RefreshKeys must each contain at least one key pair
+// Revoker and UserRoleLookup may be nil; RefreshTokens requires a non-nil Revoker
+// StrictKid when true rejects tokens without kid header
 type AsymmetricConfig struct {
-	AccessKeys     []AsymmetricKeyEntry // Key pairs for access tokens; first is primary.
-	RefreshKeys    []AsymmetricKeyEntry // Key pairs for refresh tokens; first is primary.
-	AccessTTL      time.Duration        // Lifetime of access tokens; positive, ≤ MaxAccessTTL.
-	RefreshTTL     time.Duration        // Lifetime of refresh tokens; positive, ≤ MaxRefreshTTL.
-	Issuer         string               // Required; set in iss claim and validated on parse.
-	Audience       string               // Optional; if non-empty, aud claim is set and validated.
-	Revoker        RevocationStore      // Optional; required for RefreshTokens and Revoke* methods.
-	UserRoleLookup UserRoleLookup       // Optional; called during RefreshTokens to refresh role.
-	StrictKid      bool                 // If true, token must have kid header; no fallback to primary.
+	AccessKeys     []AsymmetricKeyEntry // Key pairs for access tokens; first is primary
+	RefreshKeys    []AsymmetricKeyEntry // Key pairs for refresh tokens; first is primary
+	AccessTTL      time.Duration        // Lifetime of access tokens; positive, ≤ MaxAccessTTL
+	RefreshTTL     time.Duration        // Lifetime of refresh tokens; positive, ≤ MaxRefreshTTL
+	Issuer         string               // Required; set in iss claim and validated on parse
+	Audience       string               // Optional; if non-empty, aud claim is set and validated
+	Revoker        RevocationStore      // Optional; required for RefreshTokens and Revoke* methods
+	UserRoleLookup UserRoleLookup       // Optional; called during RefreshTokens to refresh role
+	StrictKid      bool                 // If true, token must have kid header; no fallback to primary
 }
 
-// JWTServiceAsymmetric implements Service using asymmetric signing (RS256, ES256/ES384/ES512, or EdDSA).
-// Use NewJWTServiceAsymmetric to construct; do not instantiate manually.
+// JWTServiceAsymmetric implements Service using asymmetric signing (RS256, ES256/ES384/ES512, or EdDSA)
+// Use NewJWTServiceAsymmetric to construct; do not instantiate manually
 type JWTServiceAsymmetric struct {
 	core
+
 	accessKeys          []AsymmetricKeyEntry
 	refreshKeys         []AsymmetricKeyEntry
 	accessPrimaryKid    string
@@ -56,26 +58,26 @@ type JWTServiceAsymmetric struct {
 	audience            string
 }
 
-// NewJWTServiceAsymmetric builds a JWT service with asymmetric keys from AsymmetricConfig.
-// Issuer must be non-empty; AccessKeys and RefreshKeys must each contain at least one valid key pair.
-// Key pairs are validated (RSA ≥2048 bits, ECDSA P-256/P-384/P-521, Ed25519); Kid must be non-empty and unique.
-// Revoker and UserRoleLookup may be nil; non-empty Audience adds aud claim and validation.
-// Key slices are copied but PrivateKey/PublicKey are stored by reference; do not modify key entries after construction.
+// NewJWTServiceAsymmetric builds a JWT service with asymmetric keys from AsymmetricConfig
+// Issuer must be non-empty; AccessKeys and RefreshKeys must each contain at least one valid key pair
+// Key pairs are validated (RSA ≥2048 bits, ECDSA P-256/P-384/P-521, Ed25519); Kid must be non-empty and unique
+// Revoker and UserRoleLookup may be nil; non-empty Audience adds aud claim and validation
+// Key slices are copied but PrivateKey/PublicKey are stored by reference; do not modify key entries after construction
 func NewJWTServiceAsymmetric(cfg AsymmetricConfig) (*JWTServiceAsymmetric, error) {
 	if len(cfg.AccessKeys) == 0 {
-		return nil, fmt.Errorf("access keys must contain at least one key")
+		return nil, errors.New("access keys must contain at least one key")
 	}
 	if len(cfg.RefreshKeys) == 0 {
-		return nil, fmt.Errorf("refresh keys must contain at least one key")
+		return nil, errors.New("refresh keys must contain at least one key")
 	}
 	if cfg.Issuer == "" {
-		return nil, fmt.Errorf("issuer is required")
+		return nil, errors.New("issuer is required")
 	}
 	if cfg.AccessTTL <= 0 {
-		return nil, fmt.Errorf("accessTTL must be positive")
+		return nil, errors.New("accessTTL must be positive")
 	}
 	if cfg.RefreshTTL <= 0 {
-		return nil, fmt.Errorf("refreshTTL must be positive")
+		return nil, errors.New("refreshTTL must be positive")
 	}
 	if cfg.AccessTTL > MaxAccessTTL {
 		return nil, fmt.Errorf("accessTTL must not exceed %v", MaxAccessTTL)
@@ -102,7 +104,7 @@ func NewJWTServiceAsymmetric(cfg AsymmetricConfig) (*JWTServiceAsymmetric, error
 	accessPub := make(map[string]crypto.PublicKey, len(cfg.AccessKeys))
 	for _, k := range cfg.AccessKeys {
 		if k.Kid == "" {
-			return nil, fmt.Errorf("access key Kid must be non-empty")
+			return nil, errors.New("access key Kid must be non-empty")
 		}
 		if _, exists := accessPub[k.Kid]; exists {
 			return nil, fmt.Errorf("duplicate access key Kid %q", k.Kid)
@@ -112,7 +114,7 @@ func NewJWTServiceAsymmetric(cfg AsymmetricConfig) (*JWTServiceAsymmetric, error
 	refreshPub := make(map[string]crypto.PublicKey, len(cfg.RefreshKeys))
 	for _, k := range cfg.RefreshKeys {
 		if k.Kid == "" {
-			return nil, fmt.Errorf("refresh key Kid must be non-empty")
+			return nil, errors.New("refresh key Kid must be non-empty")
 		}
 		if _, exists := refreshPub[k.Kid]; exists {
 			return nil, fmt.Errorf("duplicate refresh key Kid %q", k.Kid)
@@ -155,7 +157,7 @@ func validateAsymmetricKeyPair(priv crypto.PrivateKey, pub crypto.PublicKey) err
 	case *rsa.PrivateKey:
 		pubRSA, ok := pub.(*rsa.PublicKey)
 		if !ok {
-			return fmt.Errorf("RSA private key requires RSA public key")
+			return errors.New("RSA private key requires RSA public key")
 		}
 		if k.N.BitLen() < minRSAKeyBits {
 			return fmt.Errorf("RSA key must be at least %d bits", minRSAKeyBits)
@@ -164,29 +166,29 @@ func validateAsymmetricKeyPair(priv crypto.PrivateKey, pub crypto.PublicKey) err
 			return fmt.Errorf("RSA key validation: %w", err)
 		}
 		if k.N.Cmp(pubRSA.N) != 0 || k.E != pubRSA.E {
-			return fmt.Errorf("RSA public key does not match private key")
+			return errors.New("RSA public key does not match private key")
 		}
 		return nil
 	case ed25519.PrivateKey:
 		pubEd, ok := pub.(ed25519.PublicKey)
 		if !ok {
-			return fmt.Errorf("Ed25519 private key requires Ed25519 public key")
+			return errors.New("Ed25519 private key requires Ed25519 public key")
 		}
-		signer := priv.(crypto.Signer)
-		if !bytes.Equal(signer.Public().(ed25519.PublicKey), pubEd) {
-			return fmt.Errorf("Ed25519 public key does not match private key")
+		signer := priv.(crypto.Signer)                                //nolint:forcetypeassert
+		if !bytes.Equal(signer.Public().(ed25519.PublicKey), pubEd) { //nolint:forcetypeassert
+			return errors.New("Ed25519 public key does not match private key")
 		}
 		return nil
 	case *ecdsa.PrivateKey:
 		pubECDSA, ok := pub.(*ecdsa.PublicKey)
 		if !ok {
-			return fmt.Errorf("ECDSA private key requires ECDSA public key")
+			return errors.New("ECDSA private key requires ECDSA public key")
 		}
 		if k.Curve == nil {
-			return fmt.Errorf("ECDSA private key requires non-nil Curve")
+			return errors.New("ECDSA private key requires non-nil Curve")
 		}
-		if k.Curve != pubECDSA.Curve || k.X.Cmp(pubECDSA.X) != 0 || k.Y.Cmp(pubECDSA.Y) != 0 {
-			return fmt.Errorf("ECDSA public key does not match private key")
+		if !k.PublicKey.Equal(pubECDSA) {
+			return errors.New("ECDSA public key does not match private key")
 		}
 		switch k.Curve.Params().Name {
 		case "P-256", "P-384", "P-521":
@@ -199,13 +201,13 @@ func validateAsymmetricKeyPair(priv crypto.PrivateKey, pub crypto.PublicKey) err
 	}
 }
 
-// GenerateTokenPair issues a new access and refresh token pair with unique JTIs.
-// userID and role are stored in both tokens; algorithm is determined by the primary key (first in slice).
-// Returns (*TokenPair, nil) or an error (e.g. if signing fails).
-func (j *JWTServiceAsymmetric) GenerateTokenPair(ctx context.Context, userID uuid.UUID, role string) (*TokenPair, error) {
+// GenerateTokenPair issues a new access and refresh token pair with unique JTIs
+// userID and role are stored in both tokens; algorithm is determined by the primary key (first in slice)
+// Returns (*TokenPair, nil) or an error (e.g. if signing fails)
+func (j *JWTServiceAsymmetric) GenerateTokenPair(_ context.Context, userID uuid.UUID, role string) (*TokenPair, error) {
 	now := time.Now()
-	accessExpiry := now.Add(j.core.AccessTTL())
-	refreshExpiry := now.Add(j.core.RefreshTTL())
+	accessExpiry := now.Add(j.AccessTTL())
+	refreshExpiry := now.Add(j.RefreshTTL())
 	accessClaims, refreshClaims := buildTokenPairClaims(userID, role, j.issuer, j.audience, accessExpiry, refreshExpiry, now)
 
 	accessEntry := j.accessKeys[0]
@@ -327,7 +329,7 @@ func signingMethodForKey(priv crypto.PrivateKey) (jwt.SigningMethod, error) {
 		return jwt.SigningMethodEdDSA, nil
 	case *ecdsa.PrivateKey:
 		if k.Curve == nil {
-			return nil, fmt.Errorf("ECDSA private key requires non-nil Curve")
+			return nil, errors.New("ECDSA private key requires non-nil Curve")
 		}
 		switch k.Curve.Params().Name {
 		case "P-256":
