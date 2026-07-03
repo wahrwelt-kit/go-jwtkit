@@ -23,7 +23,7 @@
 //
 // # HTTP integration
 //
-// JWTAuth middleware validates the Bearer token via ValidateAccessToken and stores claims in the request context; WithLogger option enables logging via go-logkit. Default errors are JSON objects with code and message fields. Use ClaimsIntoContext to set claims, ClaimsFromContext, UserIDFromContext, RoleFromContext to read them in handlers. ExtractRaw reads the token from the Authorization header (RFC 6750); ExtractRawFromCookie from a cookie
+// JWTAuth middleware validates the Bearer token via ValidateAccessToken and stores claims in the request context; WithLogger accepts a *slog.Logger for optional middleware diagnostics. Default errors are JSON objects with code and message fields. Use ClaimsIntoContext to set claims, ClaimsFromContext, UserIDFromContext, RoleFromContext to read them in handlers. ExtractRaw reads the token from the Authorization header (RFC 6750); ExtractRawFromCookie from a cookie
 //
 // # Errors
 //

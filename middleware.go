@@ -2,9 +2,8 @@ package jwtkit
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
-
-	logger "github.com/wahrwelt-kit/go-logkit"
 )
 
 // MiddlewareOption configures JWTAuth (e.g. custom error response via WithErrorHandler, logging via WithLogger)
@@ -12,7 +11,7 @@ type MiddlewareOption func(*middlewareConfig)
 
 type middlewareConfig struct {
 	errorHandler func(w http.ResponseWriter, r *http.Request, err error, status int)
-	logger       logger.Logger
+	logger       *slog.Logger
 }
 
 // WithErrorHandler sets a custom handler for auth errors (missing/invalid token or nil service)
@@ -24,7 +23,7 @@ func WithErrorHandler(fn func(w http.ResponseWriter, r *http.Request, err error,
 
 // WithLogger sets the logger for the middleware. When set, logs a structured error if JWTAuth is called
 // with a nil Service (which results in a 500 response). Has no effect when WithErrorHandler is also set
-func WithLogger(l logger.Logger) MiddlewareOption {
+func WithLogger(l *slog.Logger) MiddlewareOption {
 	return func(c *middlewareConfig) { c.logger = l }
 }
 
@@ -42,7 +41,7 @@ func JWTAuth(svc Service, opts ...MiddlewareOption) func(http.Handler) http.Hand
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if svc == nil {
 				if cfg.logger != nil {
-					cfg.logger.Error("jwt: JWTAuth nil Service (misconfigured), returning 500")
+					cfg.logger.ErrorContext(r.Context(), "jwt: JWTAuth nil Service (misconfigured), returning 500")
 				}
 				if cfg.errorHandler != nil {
 					cfg.errorHandler(w, r, nil, http.StatusInternalServerError)

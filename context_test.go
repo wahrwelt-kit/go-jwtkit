@@ -1,7 +1,9 @@
 package jwtkit
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,8 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	logmock "github.com/wahrwelt-kit/go-logkit/mock"
 )
 
 func TestClaimsIntoContext_ClaimsFromContext(t *testing.T) {
@@ -131,8 +131,8 @@ func TestJWTAuth_NilService_500(t *testing.T) {
 
 func TestJWTAuth_WithLogger_NilService_500(t *testing.T) {
 	t.Parallel()
-	l := logmock.NewMockLogger(t)
-	l.On("Error", "jwt: JWTAuth nil Service (misconfigured), returning 500").Return()
+	var logs bytes.Buffer
+	l := slog.New(slog.NewJSONHandler(&logs, nil))
 	handler := JWTAuth(nil, WithLogger(l))(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 	}))
@@ -140,7 +140,8 @@ func TestJWTAuth_WithLogger_NilService_500(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	l.AssertCalled(t, "Error", "jwt: JWTAuth nil Service (misconfigured), returning 500")
+	assert.Contains(t, logs.String(), `"level":"ERROR"`)
+	assert.Contains(t, logs.String(), `"msg":"jwt: JWTAuth nil Service (misconfigured), returning 500"`)
 }
 
 func TestJWTAuth_WithErrorHandler_NilService(t *testing.T) {
