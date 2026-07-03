@@ -46,14 +46,14 @@ func ClaimsFromContext(ctx context.Context) (*CustomClaims, bool) {
 }
 
 // UserIDFromContext returns the user ID from claims in ctx as a UUID
-// Returns (uuid.Nil, false) if claims are not set or UserID is not a valid UUID string
+// Returns (uuid.Nil, false) if claims are not set, UserID is not a valid UUID string, or UserID is uuid.Nil
 func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	c, ok := ClaimsFromContext(ctx)
 	if !ok || c == nil {
 		return uuid.Nil, false
 	}
 	id, err := uuid.Parse(c.UserID)
-	if err != nil {
+	if err != nil || id == uuid.Nil {
 		return uuid.Nil, false
 	}
 	return id, true

@@ -50,6 +50,14 @@ func TestUserIDFromContext(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestUserIDFromContext_NilUUIDReturnsFalse(t *testing.T) {
+	t.Parallel()
+	ctx := ClaimsIntoContext(context.Background(), &CustomClaims{UserID: uuid.Nil.String()})
+	id, ok := UserIDFromContext(ctx)
+	assert.False(t, ok)
+	assert.Equal(t, uuid.Nil, id)
+}
+
 func TestRoleFromContext(t *testing.T) {
 	t.Parallel()
 	ctx := ClaimsIntoContext(context.Background(), &CustomClaims{Role: "admin"})
@@ -92,6 +100,7 @@ func TestJWTAuth_NoToken_401(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.JSONEq(t, `{"code":"UNAUTHORIZED","message":"not authenticated"}`, rec.Body.String())
 }
 
 func TestJWTAuth_InvalidToken_401(t *testing.T) {
@@ -105,6 +114,7 @@ func TestJWTAuth_InvalidToken_401(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.JSONEq(t, `{"code":"UNAUTHORIZED","message":"not authenticated"}`, rec.Body.String())
 }
 
 func TestJWTAuth_NilService_500(t *testing.T) {
@@ -116,6 +126,7 @@ func TestJWTAuth_NilService_500(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.JSONEq(t, `{"code":"INTERNAL_ERROR","message":"misconfigured auth"}`, rec.Body.String())
 }
 
 func TestJWTAuth_WithLogger_NilService_500(t *testing.T) {

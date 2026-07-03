@@ -35,7 +35,7 @@ type AsymmetricKeyEntry struct {
 // AsymmetricConfig configures NewJWTServiceAsymmetric
 // Issuer is required; AccessKeys and RefreshKeys must each contain at least one key pair
 // Revoker and UserRoleLookup may be nil; RefreshTokens requires a non-nil Revoker
-// StrictKid when true rejects tokens without kid header
+// Tokens without kid header are rejected
 type AsymmetricConfig struct {
 	AccessKeys     []AsymmetricKeyEntry // Key pairs for access tokens; first is primary
 	RefreshKeys    []AsymmetricKeyEntry // Key pairs for refresh tokens; first is primary
@@ -45,7 +45,7 @@ type AsymmetricConfig struct {
 	Audience       string               // Optional; if non-empty, aud claim is set and validated
 	Revoker        RevocationStore      // Optional; required for RefreshTokens and Revoke* methods
 	UserRoleLookup UserRoleLookup       // Optional; called during RefreshTokens to refresh role
-	StrictKid      bool                 // If true, token must have kid header; no fallback to primary
+	Leeway         time.Duration        // Optional clock skew tolerance for exp/nbf/iat; must be ≤ MaxLeeway
 }
 
 // JWTServiceAsymmetric implements Service using asymmetric signing (RS256, ES256/ES384/ES512, or EdDSA)
@@ -63,6 +63,7 @@ type JWTServiceAsymmetric struct {
 	refreshValidMethods []string
 	issuer              string
 	audience            string
+	leeway              time.Duration
 }
 
 // NewJWTServiceAsymmetric builds a JWT service with asymmetric keys from AsymmetricConfig
@@ -91,6 +92,9 @@ func NewJWTServiceAsymmetric(cfg AsymmetricConfig) (*JWTServiceAsymmetric, error
 	}
 	if cfg.RefreshTTL > MaxRefreshTTL {
 		return nil, fmt.Errorf("refreshTTL must not exceed %v", MaxRefreshTTL)
+	}
+	if err := validateLeeway(cfg.Leeway); err != nil {
+		return nil, err
 	}
 	for i, k := range cfg.AccessKeys {
 		if k.PrivateKey == nil || k.PublicKey == nil {
@@ -139,18 +143,18 @@ func NewJWTServiceAsymmetric(cfg AsymmetricConfig) (*JWTServiceAsymmetric, error
 		refreshValidMethods: buildValidMethodsFromKeys(cfg.RefreshKeys),
 		issuer:              cfg.Issuer,
 		audience:            cfg.Audience,
+		leeway:              cfg.Leeway,
 	}
 	j.core = *newCore(
 		func(ctx context.Context, s string) (*CustomClaims, error) {
-			return j.rawValidateToken(ctx, s, TokenTypeAccess, j.accessPrimaryKid, j.accessPublicByKid, j.accessValidMethods, j.StrictKid())
+			return j.rawValidateToken(ctx, s, TokenTypeAccess, j.accessPublicByKid, j.accessValidMethods)
 		},
 		func(ctx context.Context, s string) (*CustomClaims, error) {
-			return j.rawValidateToken(ctx, s, TokenTypeRefresh, j.refreshPrimaryKid, j.refreshPublicByKid, j.refreshValidMethods, j.StrictKid())
+			return j.rawValidateToken(ctx, s, TokenTypeRefresh, j.refreshPublicByKid, j.refreshValidMethods)
 		},
 		j.GenerateTokenPair,
 		cfg.Revoker,
 		cfg.UserRoleLookup,
-		cfg.StrictKid,
 		cfg.AccessTTL,
 		cfg.RefreshTTL,
 	)
@@ -212,6 +216,9 @@ func validateAsymmetricKeyPair(priv crypto.PrivateKey, pub crypto.PublicKey) err
 // userID and role are stored in both tokens; algorithm is determined by the primary key (first in slice)
 // Returns (*TokenPair, nil) or an error (e.g. if signing fails)
 func (j *JWTServiceAsymmetric) GenerateTokenPair(_ context.Context, userID uuid.UUID, role string) (*TokenPair, error) {
+	if err := validateGenerateUserID(userID); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	accessExpiry := now.Add(j.AccessTTL())
 	refreshExpiry := now.Add(j.RefreshTTL())
@@ -265,7 +272,7 @@ func buildValidMethodsFromKeys(keys []AsymmetricKeyEntry) []string {
 	return out
 }
 
-func (j *JWTServiceAsymmetric) rawValidateToken(ctx context.Context, tokenString, tokenType, primaryKid string, publicByKid map[string]crypto.PublicKey, validMethods []string, strict bool) (*CustomClaims, error) { //nolint:revive,cyclop // strict is a validation flag required by JWT strict-mode feature; complexity from key-type dispatch
+func (j *JWTServiceAsymmetric) rawValidateToken(ctx context.Context, tokenString, tokenType string, publicByKid map[string]crypto.PublicKey, validMethods []string) (*CustomClaims, error) { //nolint:revive,cyclop // complexity from key-type dispatch
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -273,20 +280,18 @@ func (j *JWTServiceAsymmetric) rawValidateToken(ctx context.Context, tokenString
 		jwt.WithIssuer(j.issuer),
 		jwt.WithValidMethods(validMethods),
 		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
 	}
 	if j.audience != "" {
 		opts = append(opts, jwt.WithAudience(j.audience))
 	}
+	if j.leeway > 0 {
+		opts = append(opts, jwt.WithLeeway(j.leeway))
+	}
 	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (any, error) {
-		if strict {
-			k, ok := token.Header["kid"].(string)
-			if !ok || k == "" {
-				return nil, ErrMissingKidHeader
-			}
-		}
-		kid := primaryKid
-		if k, ok := token.Header["kid"].(string); ok && k != "" {
-			kid = k
+		kid, ok := token.Header["kid"].(string)
+		if !ok || kid == "" {
+			return nil, ErrMissingKidHeader
 		}
 		key, ok := publicByKid[kid]
 		if !ok {
@@ -322,8 +327,8 @@ func (j *JWTServiceAsymmetric) rawValidateToken(ctx context.Context, tokenString
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("failed to validate %s token: %w", tokenType, ErrInvalidToken)
 	}
-	if claims.TokenType != tokenType {
-		return nil, fmt.Errorf("failed to validate %s token: %w", tokenType, ErrInvalidTokenType)
+	if err := validateCustomClaims(claims, tokenType); err != nil {
+		return nil, fmt.Errorf("failed to validate %s token: %w", tokenType, err)
 	}
 	return claims, nil
 }

@@ -2,7 +2,9 @@ package jwtkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -15,6 +17,7 @@ func buildTokenPairClaims(userID uuid.UUID, role, issuer, audience string, acces
 
 	accessReg := jwt.RegisteredClaims{
 		ID:        accessJTI,
+		Subject:   userID.String(),
 		ExpiresAt: jwt.NewNumericDate(accessExpiry),
 		IssuedAt:  jwt.NewNumericDate(now),
 		NotBefore: jwt.NewNumericDate(now),
@@ -32,6 +35,7 @@ func buildTokenPairClaims(userID uuid.UUID, role, issuer, audience string, acces
 
 	refreshReg := jwt.RegisteredClaims{
 		ID:        refreshJTI,
+		Subject:   userID.String(),
 		ExpiresAt: jwt.NewNumericDate(refreshExpiry),
 		IssuedAt:  jwt.NewNumericDate(now),
 		NotBefore: jwt.NewNumericDate(now),
@@ -47,6 +51,46 @@ func buildTokenPairClaims(userID uuid.UUID, role, issuer, audience string, acces
 		RegisteredClaims: refreshReg,
 	}
 	return accessClaims, refreshClaims
+}
+
+func validateGenerateUserID(userID uuid.UUID) error {
+	if userID == uuid.Nil {
+		return ErrNilUserID
+	}
+	return nil
+}
+
+func validateLeeway(leeway time.Duration) error {
+	if leeway < 0 {
+		return errors.New("leeway must not be negative")
+	}
+	if leeway > MaxLeeway {
+		return fmt.Errorf("leeway must not exceed %v", MaxLeeway)
+	}
+	return nil
+}
+
+func validateCustomClaims(claims *CustomClaims, tokenType string) error {
+	if claims == nil {
+		return ErrInvalidToken
+	}
+	if claims.TokenType != TokenTypeAccess && claims.TokenType != TokenTypeRefresh {
+		return ErrInvalidTokenType
+	}
+	if claims.TokenType != tokenType {
+		return ErrInvalidTokenType
+	}
+	if strings.TrimSpace(claims.ID) == "" {
+		return ErrInvalidToken
+	}
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil || userID == uuid.Nil {
+		return ErrInvalidToken
+	}
+	if claims.Subject != userID.String() {
+		return ErrInvalidToken
+	}
+	return nil
 }
 
 func revocationTTL(claims *CustomClaims, fallback time.Duration) time.Duration {
@@ -68,6 +112,9 @@ func checkRevocationWithStore(ctx context.Context, claims *CustomClaims, revoker
 	userID, err := uuid.Parse(claims.UserID)
 	if err != nil {
 		return fmt.Errorf("invalid user_id in claims: %w", err)
+	}
+	if userID == uuid.Nil {
+		return ErrInvalidToken
 	}
 	revoked, err := revoker.IsRevoked(ctx, claims.ID)
 	if err != nil {
@@ -114,6 +161,9 @@ func refreshTokensFromClaims(
 	userID, err := uuid.Parse(claims.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid user ID in token claims: %w", err)
+	}
+	if userID == uuid.Nil {
+		return nil, ErrInvalidToken
 	}
 	role := claims.Role
 	if fn := userRoleLookup; fn != nil {

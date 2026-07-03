@@ -15,6 +15,7 @@ const (
 	MinSecretLength  = 32                  // Minimum byte length for HS256 KeyEntry.Secret
 	MaxAccessTTL     = 24 * time.Hour      // Maximum allowed access token TTL in Config
 	MaxRefreshTTL    = 90 * 24 * time.Hour // Maximum allowed refresh token TTL in Config
+	MaxLeeway        = 5 * time.Minute     // Maximum allowed clock skew tolerance in Config
 	TokenTypeAccess  = "access"            // Value of token_type claim for access tokens
 	TokenTypeRefresh = "refresh"           // Value of token_type claim for refresh tokens
 	SigningMethod    = "HS256"             // Algorithm name for symmetric service
@@ -37,7 +38,7 @@ type KeyEntry struct {
 // Config configures NewJWTService
 // Issuer is required; AccessKeys and RefreshKeys must each contain at least one key
 // Revoker and UserRoleLookup may be nil; RefreshTokens requires a non-nil Revoker (returns ErrRevokerRequired)
-// StrictKid when true rejects tokens without kid header; when false, missing kid falls back to the primary key
+// Tokens without kid header are rejected
 type Config struct {
 	AccessKeys     []KeyEntry      // HS256 keys for access tokens; first is primary
 	RefreshKeys    []KeyEntry      // HS256 keys for refresh tokens; first is primary
@@ -47,11 +48,11 @@ type Config struct {
 	Audience       string          // Optional; if non-empty, aud claim is set and validated
 	Revoker        RevocationStore // Optional; required for RefreshTokens and Revoke* methods
 	UserRoleLookup UserRoleLookup  // Optional; called during RefreshTokens to refresh role
-	StrictKid      bool            // If true, token must have kid header; no fallback to primary
+	Leeway         time.Duration   // Optional clock skew tolerance for exp/nbf/iat; must be ≤ MaxLeeway
 }
 
 // Service is the interface for JWT issuance, validation, refresh, and revocation
-// Implemented by JWTService (HS256) and JWTServiceAsymmetric (RS256/ES256/EdDSA)
+// Implemented by JWTService (HS256) and JWTServiceAsymmetric (RS256/ES256/ES384/ES512/EdDSA)
 // All methods accept context.Context as first argument; cancellation is respected where applicable
 type Service interface {
 	// GenerateTokenPair issues a new access and refresh token pair for the user and role
@@ -81,6 +82,7 @@ type JWTService struct {
 	refreshPrimaryKid string
 	issuer            string
 	audience          string
+	leeway            time.Duration
 }
 
 // CustomClaims extends jwt.RegisteredClaims with user_id, role, and token_type
@@ -109,6 +111,7 @@ type TokenPair struct {
 // Revoker and UserRoleLookup may be nil; RefreshTokens requires a non-nil Revoker (returns ErrRevokerRequired)
 // Non-empty Audience adds aud claim and validates it on parse
 // AccessTTL and RefreshTTL must be positive and not exceed MaxAccessTTL / MaxRefreshTTL
+// Missing kid headers are rejected; Leeway may be set for small clock skew tolerance
 // The service copies secret bytes internally; the caller may zero KeyEntry.Secret slices after the call
 func NewJWTService(cfg Config) (*JWTService, error) { //nolint:revive,cyclop // constructor validates multiple key entries and config fields
 	if len(cfg.AccessKeys) == 0 {
@@ -131,6 +134,9 @@ func NewJWTService(cfg Config) (*JWTService, error) { //nolint:revive,cyclop // 
 	}
 	if cfg.RefreshTTL > MaxRefreshTTL {
 		return nil, fmt.Errorf("refreshTTL must not exceed %v", MaxRefreshTTL)
+	}
+	if err := validateLeeway(cfg.Leeway); err != nil {
+		return nil, err
 	}
 	accessByKid := make(map[string][]byte, len(cfg.AccessKeys))
 	for _, k := range cfg.AccessKeys {
@@ -169,18 +175,18 @@ func NewJWTService(cfg Config) (*JWTService, error) { //nolint:revive,cyclop // 
 		refreshPrimaryKid: cfg.RefreshKeys[0].Kid,
 		issuer:            cfg.Issuer,
 		audience:          cfg.Audience,
+		leeway:            cfg.Leeway,
 	}
 	svc.core = *newCore(
 		func(ctx context.Context, s string) (*CustomClaims, error) {
-			return svc.rawValidateToken(ctx, s, TokenTypeAccess, svc.accessPrimaryKid, svc.accessKeysByKid, svc.StrictKid())
+			return svc.rawValidateToken(ctx, s, TokenTypeAccess, svc.accessKeysByKid)
 		},
 		func(ctx context.Context, s string) (*CustomClaims, error) {
-			return svc.rawValidateToken(ctx, s, TokenTypeRefresh, svc.refreshPrimaryKid, svc.refreshKeysByKid, svc.StrictKid())
+			return svc.rawValidateToken(ctx, s, TokenTypeRefresh, svc.refreshKeysByKid)
 		},
 		svc.GenerateTokenPair,
 		cfg.Revoker,
 		cfg.UserRoleLookup,
-		cfg.StrictKid,
 		cfg.AccessTTL,
 		cfg.RefreshTTL,
 	)
@@ -191,6 +197,9 @@ func NewJWTService(cfg Config) (*JWTService, error) { //nolint:revive,cyclop // 
 // userID and role are stored in both tokens; use after login or registration
 // Returns (*TokenPair, nil) or an error (e.g. if signing fails)
 func (j *JWTService) GenerateTokenPair(_ context.Context, userID uuid.UUID, role string) (*TokenPair, error) {
+	if err := validateGenerateUserID(userID); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	accessExpiry := now.Add(j.AccessTTL())
 	refreshExpiry := now.Add(j.RefreshTTL())
@@ -220,7 +229,7 @@ func (j *JWTService) GenerateTokenPair(_ context.Context, userID uuid.UUID, role
 	}, nil
 }
 
-func (j *JWTService) rawValidateToken(ctx context.Context, tokenString, tokenType, primaryKid string, keysByKid map[string][]byte, strict bool) (*CustomClaims, error) { //nolint:revive // strict is a validation flag required by JWT strict-mode feature
+func (j *JWTService) rawValidateToken(ctx context.Context, tokenString, tokenType string, keysByKid map[string][]byte) (*CustomClaims, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -228,23 +237,21 @@ func (j *JWTService) rawValidateToken(ctx context.Context, tokenString, tokenTyp
 		jwt.WithIssuer(j.issuer),
 		jwt.WithValidMethods([]string{"HS256"}),
 		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
 	}
 	if j.audience != "" {
 		opts = append(opts, jwt.WithAudience(j.audience))
+	}
+	if j.leeway > 0 {
+		opts = append(opts, jwt.WithLeeway(j.leeway))
 	}
 	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodHS256 {
 			return nil, ErrUnexpectedSigningMethod
 		}
-		if strict {
-			k, ok := token.Header["kid"].(string)
-			if !ok || k == "" {
-				return nil, ErrMissingKidHeader
-			}
-		}
-		kid := primaryKid
-		if k, ok := token.Header["kid"].(string); ok && k != "" {
-			kid = k
+		kid, ok := token.Header["kid"].(string)
+		if !ok || kid == "" {
+			return nil, ErrMissingKidHeader
 		}
 		key, ok := keysByKid[kid]
 		if !ok {
@@ -263,8 +270,8 @@ func (j *JWTService) rawValidateToken(ctx context.Context, tokenString, tokenTyp
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("failed to validate %s token: %w", tokenType, ErrInvalidToken)
 	}
-	if claims.TokenType != tokenType {
-		return nil, fmt.Errorf("failed to validate %s token: %w", tokenType, ErrInvalidTokenType)
+	if err := validateCustomClaims(claims, tokenType); err != nil {
+		return nil, fmt.Errorf("failed to validate %s token: %w", tokenType, err)
 	}
 	return claims, nil
 }

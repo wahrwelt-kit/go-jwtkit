@@ -88,13 +88,13 @@ func TestExtractRawFromCookie_EmptyName(t *testing.T) {
 func TestExtractRawFromCookie_EmptyCookieValue(t *testing.T) {
 	t.Parallel()
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "token", Value: ""})
-	assert.Empty(t, ExtractRawFromCookie(req, "token"))
+	req.AddCookie(&http.Cookie{Name: testCookieToken, Value: ""})
+	assert.Empty(t, ExtractRawFromCookie(req, testCookieToken))
 }
 
 func TestExtractRawFromCookie_OversizedValue(t *testing.T) {
 	t.Parallel()
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "token", Value: strings.Repeat("a", maxTokenLength+1)})
-	assert.Empty(t, ExtractRawFromCookie(req, "token"))
+	req.AddCookie(&http.Cookie{Name: testCookieToken, Value: strings.Repeat("a", maxTokenLength+1)})
+	assert.Empty(t, ExtractRawFromCookie(req, testCookieToken))
 }

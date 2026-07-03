@@ -3,19 +3,27 @@
 // # HS256 (symmetric)
 //
 // Use NewJWTService with KeyEntry secrets. Issuer and TTLs are required; all secrets must be at least MinSecretLength (32) bytes
-// Key rotation is supported via kid (first key is primary). Optional RevocationStore (e.g. RedisRevocationStore) for revocation and refresh replay protection. UserRoleLookup can refresh role when issuing new tokens from a refresh token. If audience is non-empty, tokens include and validate the aud claim
+// Key rotation is supported via kid (first key is primary), and tokens without kid are rejected. Optional RevocationStore (e.g. RedisRevocationStore) provides revocation and refresh replay protection. UserRoleLookup can refresh role when issuing new tokens from a refresh token. If audience is non-empty, tokens include and validate the aud claim
 //
 // # RS256 / EdDSA (asymmetric)
 //
-// Use NewJWTServiceAsymmetric with AsymmetricKeyEntry key pairs. Supports RSA (RS256 only, min 2048 bits), ECDSA (ES256/ES384/ES512 for P-256/P-384/P-521), and Ed25519 (EdDSA). Same revocation and UserRoleLookup semantics as HS256
+// Use NewJWTServiceAsymmetric with AsymmetricKeyEntry key pairs. Supports RSA (RS256 only, min 2048 bits), ECDSA (ES256/ES384/ES512 for P-256/P-384/P-521), and Ed25519 (EdDSA). Same kid, revocation, claim validation, Leeway, and UserRoleLookup semantics as HS256
+//
+// # JWK / JWKS
+//
+// Use PublicJWKFromKey and PublicKeyFromJWK to convert supported asymmetric public keys to and from RFC 7517 public JWKs. Use PublicJWKSetFromKeys and PublicKeysFromJWKSet for public key sets keyed by kid. JWK helpers only handle public keys and should be used for verification/discovery endpoints, not private key storage
 //
 // # Revocation
 //
 // RevocationStore persists revoked JTIs and user revocation timestamps (e.g. after password change). RefreshTokens requires a non-nil store and uses RevokeIfFirst (atomic) to prevent refresh token replay. ErrRevokerRequired is returned when RefreshTokens is called without a revoker. RedisRevocationStore accepts WithRevocationKeyPrefix and WithRevocationNowFunc options
 //
+// # Claims
+//
+// Generated tokens include exp, iat, nbf, iss, jti, sub, user_id, role, and token_type. Validation requires exp, issuer, known kid, non-empty JTI, valid non-nil user_id, token_type access/refresh, and sub equal to user_id. Config.Leeway / AsymmetricConfig.Leeway allows bounded exp/nbf/iat clock skew up to MaxLeeway
+//
 // # HTTP integration
 //
-// JWTAuth middleware validates the Bearer token via ValidateAccessToken and stores claims in the request context; WithLogger option enables logging via go-logkit. Use ClaimsIntoContext to set claims, ClaimsFromContext, UserIDFromContext, RoleFromContext to read them in handlers. ExtractRaw reads the token from the Authorization header (RFC 6750); ExtractRawFromCookie from a cookie
+// JWTAuth middleware validates the Bearer token via ValidateAccessToken and stores claims in the request context; WithLogger option enables logging via go-logkit. Default errors are JSON objects with code and message fields. Use ClaimsIntoContext to set claims, ClaimsFromContext, UserIDFromContext, RoleFromContext to read them in handlers. ExtractRaw reads the token from the Authorization header (RFC 6750); ExtractRawFromCookie from a cookie
 //
 // # Errors
 //

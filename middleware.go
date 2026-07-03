@@ -47,7 +47,7 @@ func JWTAuth(svc Service, opts ...MiddlewareOption) func(http.Handler) http.Hand
 				if cfg.errorHandler != nil {
 					cfg.errorHandler(w, r, nil, http.StatusInternalServerError)
 				} else {
-					writeError(w, http.StatusInternalServerError, "misconfigured auth")
+					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "misconfigured auth")
 				}
 				return
 			}
@@ -77,13 +77,13 @@ func JWTAuth(svc Service, opts ...MiddlewareOption) func(http.Handler) http.Hand
 
 func writeUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
-	writeError(w, http.StatusUnauthorized, "not authenticated")
+	writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
+func writeError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	b, err := json.Marshal(map[string]string{"error": message})
+	b, err := json.Marshal(map[string]string{"code": code, "message": message})
 	if err != nil {
 		return
 	}

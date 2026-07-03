@@ -7,8 +7,8 @@ var (
 	// expired, malformed, or otherwise fails validation before revocation can be attempted
 	ErrTokenInvalid = errors.New("token already invalid or missing")
 
-	// ErrRevokerRequired is returned by RefreshTokens when the service has no RevocationStore (required to prevent refresh token replay)
-	ErrRevokerRequired = errors.New("RefreshTokens requires a non-nil RevocationStore to prevent refresh token replay")
+	// ErrRevokerRequired is returned when token refresh or revocation requires a RevocationStore but none is configured
+	ErrRevokerRequired = errors.New("jwt: revocation requires a non-nil RevocationStore")
 
 	// ErrTokenCannotRevoke is returned by RevokeAccessToken, RevokeRefreshToken, and RefreshTokens
 	// when the token has no JTI (claims.ID); such tokens cannot be individually revoked or one-time-used
@@ -20,7 +20,7 @@ var (
 	// ErrUnexpectedSigningMethod is returned when the token's signing algorithm does not match the service's keys
 	ErrUnexpectedSigningMethod = errors.New("unexpected signing method")
 
-	// ErrMissingKidHeader is returned when StrictKid is true and the token has no kid header
+	// ErrMissingKidHeader is returned when the token has no kid header
 	ErrMissingKidHeader = errors.New("token missing kid header")
 
 	// ErrTokenRevoked is returned when the token has been revoked (JTI or user-level)
@@ -33,6 +33,6 @@ var (
 	// (one-time-use replay protection via RevokeIfFirst lost the race - token reuse attempt)
 	ErrRefreshTokenReplayed = errors.New("refresh token already used")
 
-	// ErrNilUserID is returned by RevokeUserTokens when userID is uuid.Nil
-	ErrNilUserID = errors.New("jwt: user id is required for RevokeUserTokens")
+	// ErrNilUserID is returned when a token or revocation operation receives uuid.Nil as userID
+	ErrNilUserID = errors.New("jwt: user id is required")
 )

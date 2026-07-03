@@ -9,14 +9,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// core holds raw validate callbacks, revoker, user role lookup, TTLs, and strictKid. Created by newCore; not used directly by callers
+// core holds raw validate callbacks, revoker, user role lookup, and TTLs. Created by newCore; not used directly by callers
 type core struct {
 	rawValidateAccess  func(context.Context, string) (*CustomClaims, error)
 	rawValidateRefresh func(context.Context, string) (*CustomClaims, error)
 	generatePair       func(context.Context, uuid.UUID, string) (*TokenPair, error)
 	revoker            RevocationStore
 	userRoleLookup     atomic.Pointer[UserRoleLookup]
-	strictKid          atomic.Bool
 	accessTTL          time.Duration
 	refreshTTL         time.Duration
 }
@@ -27,7 +26,6 @@ func newCore(
 	generatePair func(context.Context, uuid.UUID, string) (*TokenPair, error),
 	revoker RevocationStore,
 	userRoleLookup UserRoleLookup,
-	strictKid bool,
 	accessTTL, refreshTTL time.Duration,
 ) *core {
 	c := &core{
@@ -41,7 +39,6 @@ func newCore(
 	if userRoleLookup != nil {
 		c.userRoleLookup.Store(&userRoleLookup)
 	}
-	c.strictKid.Store(strictKid)
 	return c
 }
 
@@ -63,18 +60,7 @@ func (c *core) RevocationEnabled() bool {
 	return c.revoker != nil
 }
 
-// SetStrictKid sets whether tokens without kid header are rejected
-// When true, kid is required and there is no fallback to the primary key; when false, missing kid uses the primary key
-func (c *core) SetStrictKid(strict bool) {
-	c.strictKid.Store(strict)
-}
-
-// StrictKid returns whether tokens without kid header are rejected
-func (c *core) StrictKid() bool {
-	return c.strictKid.Load()
-}
-
-// ValidateAccessToken parses the token, validates signature and standard claims (exp, iss, aud, kid if strict),
+// ValidateAccessToken parses the token, validates signature and standard claims (exp, iss, aud, kid),
 // then checks revocation when RevocationStore is set
 // Returns (*CustomClaims, nil) or an error (e.g. ErrInvalidToken, ErrTokenRevoked, ErrUnexpectedSigningMethod)
 func (c *core) ValidateAccessToken(ctx context.Context, tokenString string) (*CustomClaims, error) {
@@ -112,15 +98,15 @@ func (c *core) GenerateTokenPair(ctx context.Context, userID uuid.UUID, role str
 // Use for logout or one-time invalidation of a refresh token
 // Returns nil on success; ErrTokenInvalid if the token is invalid; ErrTokenCannotRevoke if jti is missing; ErrRevokerRequired if revoker is nil
 func (c *core) RevokeRefreshToken(ctx context.Context, refreshTokenString string) error {
+	if c.revoker == nil {
+		return ErrRevokerRequired
+	}
 	claims, err := c.ValidateRefreshToken(ctx, refreshTokenString)
 	if err != nil {
 		return ErrTokenInvalid
 	}
 	if claims.ID == "" {
 		return ErrTokenCannotRevoke
-	}
-	if c.revoker == nil {
-		return ErrRevokerRequired
 	}
 	ttl := revocationTTL(claims, c.refreshTTL)
 	return c.revoker.Revoke(ctx, claims.ID, ttl)
@@ -130,15 +116,15 @@ func (c *core) RevokeRefreshToken(ctx context.Context, refreshTokenString string
 // Use when you need to invalidate a single access token (e.g. security event)
 // Returns nil on success; ErrTokenInvalid, ErrTokenCannotRevoke, or ErrRevokerRequired when applicable
 func (c *core) RevokeAccessToken(ctx context.Context, accessTokenString string) error {
+	if c.revoker == nil {
+		return ErrRevokerRequired
+	}
 	claims, err := c.ValidateAccessToken(ctx, accessTokenString)
 	if err != nil {
 		return ErrTokenInvalid
 	}
 	if claims.ID == "" {
 		return ErrTokenCannotRevoke
-	}
-	if c.revoker == nil {
-		return ErrRevokerRequired
 	}
 	ttl := c.accessTTL
 	if claims.ExpiresAt != nil {

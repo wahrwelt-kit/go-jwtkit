@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,6 +46,7 @@ func testAsymmetricRoundtrip(t *testing.T, svc *JWTServiceAsymmetric) {
 	claims, err := svc.ValidateAccessToken(context.Background(), pair.AccessToken)
 	require.NoError(t, err)
 	assert.Equal(t, userID.String(), claims.UserID)
+	assert.Equal(t, userID.String(), claims.Subject)
 	assert.Equal(t, TokenTypeAccess, claims.TokenType)
 }
 
@@ -110,4 +112,41 @@ func TestNewJWTServiceAsymmetric_InvalidKeyPair(t *testing.T) {
 		AccessTTL:   time.Hour, RefreshTTL: time.Hour, Issuer: testIssuer,
 	})
 	require.Error(t, err)
+}
+
+func TestJWTServiceAsymmetric_GenerateTokenPair_RejectsNilUserID(t *testing.T) {
+	t.Parallel()
+	accessPriv, accessPub := mustEd25519KeyPair(t)
+	refreshPriv, refreshPub := mustEd25519KeyPair(t)
+	svc, err := NewJWTServiceAsymmetric(AsymmetricConfig{
+		AccessKeys:  []AsymmetricKeyEntry{{Kid: "a1", PrivateKey: accessPriv, PublicKey: accessPub}},
+		RefreshKeys: []AsymmetricKeyEntry{{Kid: "r1", PrivateKey: refreshPriv, PublicKey: refreshPub}},
+		AccessTTL:   time.Hour, RefreshTTL: time.Hour, Issuer: testIssuer,
+	})
+	require.NoError(t, err)
+	pair, err := svc.GenerateTokenPair(context.Background(), uuid.Nil, "user")
+	require.ErrorIs(t, err, ErrNilUserID)
+	assert.Nil(t, pair)
+}
+
+func TestJWTServiceAsymmetric_ValidateAccessToken_RejectsMissingKid(t *testing.T) {
+	t.Parallel()
+	accessPriv, accessPub := mustEd25519KeyPair(t)
+	refreshPriv, refreshPub := mustEd25519KeyPair(t)
+	svc, err := NewJWTServiceAsymmetric(AsymmetricConfig{
+		AccessKeys:  []AsymmetricKeyEntry{{Kid: "a1", PrivateKey: accessPriv, PublicKey: accessPub}},
+		RefreshKeys: []AsymmetricKeyEntry{{Kid: "r1", PrivateKey: refreshPriv, PublicKey: refreshPub}},
+		AccessTTL:   time.Hour, RefreshTTL: time.Hour, Issuer: testIssuer,
+	})
+	require.NoError(t, err)
+
+	now := time.Now().Add(-time.Second)
+	claims, _ := buildTokenPairClaims(uuid.New(), "user", testIssuer, "", now.Add(time.Hour), now.Add(24*time.Hour), now)
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	tokenString, err := token.SignedString(accessPriv)
+	require.NoError(t, err)
+
+	got, err := svc.ValidateAccessToken(context.Background(), tokenString)
+	require.ErrorIs(t, err, ErrMissingKidHeader)
+	assert.Nil(t, got)
 }

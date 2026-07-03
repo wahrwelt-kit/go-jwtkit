@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,6 +34,23 @@ func newTestService(t *testing.T, revoker RevocationStore) *JWTService {
 	return svc
 }
 
+func signTestAccessClaims(t *testing.T, claims *CustomClaims, kid string) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	if kid != "" {
+		token.Header["kid"] = kid
+	}
+	tokenString, err := token.SignedString([]byte(testAccessSecret))
+	require.NoError(t, err)
+	return tokenString
+}
+
+func buildTestAccessClaims(userID uuid.UUID) *CustomClaims {
+	now := time.Now().Add(-time.Second)
+	accessClaims, _ := buildTokenPairClaims(userID, "user", testIssuer, "", now.Add(time.Hour), now.Add(24*time.Hour), now)
+	return accessClaims
+}
+
 func TestJWTService_GenerateTokenPair_Success(t *testing.T) {
 	t.Parallel()
 	service := newTestService(t, nil)
@@ -43,6 +61,14 @@ func TestJWTService_GenerateTokenPair_Success(t *testing.T) {
 	assert.NotEmpty(t, pair.AccessToken)
 	assert.NotEmpty(t, pair.RefreshToken)
 	assert.Greater(t, pair.AccessExpiresAt, time.Now().Unix())
+}
+
+func TestJWTService_GenerateTokenPair_RejectsNilUserID(t *testing.T) {
+	t.Parallel()
+	service := newTestService(t, nil)
+	pair, err := service.GenerateTokenPair(context.Background(), uuid.Nil, "admin")
+	require.ErrorIs(t, err, ErrNilUserID)
+	assert.Nil(t, pair)
 }
 
 func TestJWTService_ValidateAccessToken_Success(t *testing.T) {
@@ -56,6 +82,7 @@ func TestJWTService_ValidateAccessToken_Success(t *testing.T) {
 	claims, err := service.ValidateAccessToken(context.Background(), pair.AccessToken)
 	require.NoError(t, err)
 	assert.Equal(t, userID.String(), claims.UserID)
+	assert.Equal(t, userID.String(), claims.Subject)
 	assert.Equal(t, "admin", claims.Role)
 	assert.Equal(t, TokenTypeAccess, claims.TokenType)
 }
@@ -111,7 +138,155 @@ func TestJWTService_ValidateRefreshToken_Success(t *testing.T) {
 	claims, err := service.ValidateRefreshToken(context.Background(), pair.RefreshToken)
 	require.NoError(t, err)
 	assert.Equal(t, userID.String(), claims.UserID)
+	assert.Equal(t, userID.String(), claims.Subject)
 	assert.Equal(t, TokenTypeRefresh, claims.TokenType)
+}
+
+func TestJWTService_ValidateAccessToken_RejectsInvalidCustomClaimsWithoutRevoker(t *testing.T) {
+	t.Parallel()
+	service := newTestService(t, nil)
+	validUserID := uuid.New()
+	tests := []struct {
+		name   string
+		mutate func(*CustomClaims)
+		want   error
+	}{
+		{
+			name:   "empty user_id",
+			mutate: func(c *CustomClaims) { c.UserID = "" },
+			want:   ErrInvalidToken,
+		},
+		{
+			name:   "invalid user_id",
+			mutate: func(c *CustomClaims) { c.UserID = "not-a-uuid" },
+			want:   ErrInvalidToken,
+		},
+		{
+			name: "nil user_id",
+			mutate: func(c *CustomClaims) {
+				c.UserID = uuid.Nil.String()
+				c.Subject = uuid.Nil.String()
+			},
+			want: ErrInvalidToken,
+		},
+		{
+			name:   "empty jti",
+			mutate: func(c *CustomClaims) { c.ID = "" },
+			want:   ErrInvalidToken,
+		},
+		{
+			name:   "invalid token_type",
+			mutate: func(c *CustomClaims) { c.TokenType = "id" },
+			want:   ErrInvalidTokenType,
+		},
+		{
+			name:   "missing subject",
+			mutate: func(c *CustomClaims) { c.Subject = "" },
+			want:   ErrInvalidToken,
+		},
+		{
+			name:   "subject mismatch",
+			mutate: func(c *CustomClaims) { c.Subject = uuid.New().String() },
+			want:   ErrInvalidToken,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			claims := buildTestAccessClaims(validUserID)
+			tc.mutate(claims)
+			tokenString := signTestAccessClaims(t, claims, "0")
+			got, err := service.ValidateAccessToken(context.Background(), tokenString)
+			require.ErrorIs(t, err, tc.want)
+			assert.Nil(t, got)
+		})
+	}
+}
+
+func TestJWTService_ValidateAccessToken_RejectsMissingKidByDefault(t *testing.T) {
+	t.Parallel()
+	service := newTestService(t, nil)
+	claims := buildTestAccessClaims(uuid.New())
+	tokenString := signTestAccessClaims(t, claims, "")
+	got, err := service.ValidateAccessToken(context.Background(), tokenString)
+	require.ErrorIs(t, err, ErrMissingKidHeader)
+	assert.Nil(t, got)
+}
+
+func TestJWTService_ValidateAccessToken_LeewayAllowsSmallClockSkew(t *testing.T) {
+	t.Parallel()
+	service, err := NewJWTService(Config{
+		AccessKeys:  []KeyEntry{{Kid: "0", Secret: []byte(testAccessSecret)}},
+		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte(testRefreshSecret)}},
+		AccessTTL:   time.Hour,
+		RefreshTTL:  time.Hour,
+		Issuer:      testIssuer,
+		Leeway:      10 * time.Second,
+	})
+	require.NoError(t, err)
+	now := time.Now().Add(-time.Minute)
+	claims, _ := buildTokenPairClaims(uuid.New(), "user", testIssuer, "", time.Now().Add(-2*time.Second), time.Now().Add(time.Hour), now)
+	tokenString := signTestAccessClaims(t, claims, "0")
+	got, err := service.ValidateAccessToken(context.Background(), tokenString)
+	require.NoError(t, err)
+	assert.Equal(t, claims.UserID, got.UserID)
+}
+
+func TestJWTService_ValidateAccessToken_RejectsTokenExpiredBeyondLeeway(t *testing.T) {
+	t.Parallel()
+	service, err := NewJWTService(Config{
+		AccessKeys:  []KeyEntry{{Kid: "0", Secret: []byte(testAccessSecret)}},
+		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte(testRefreshSecret)}},
+		AccessTTL:   time.Hour,
+		RefreshTTL:  time.Hour,
+		Issuer:      testIssuer,
+		Leeway:      10 * time.Second,
+	})
+	require.NoError(t, err)
+	now := time.Now().Add(-time.Minute)
+	claims, _ := buildTokenPairClaims(uuid.New(), "user", testIssuer, "", time.Now().Add(-20*time.Second), time.Now().Add(time.Hour), now)
+	tokenString := signTestAccessClaims(t, claims, "0")
+	got, err := service.ValidateAccessToken(context.Background(), tokenString)
+	require.Error(t, err)
+	assert.Nil(t, got)
+}
+
+func TestJWTService_ValidateAccessToken_LeewayAllowsSmallFutureIssuedAt(t *testing.T) {
+	t.Parallel()
+	service, err := NewJWTService(Config{
+		AccessKeys:  []KeyEntry{{Kid: "0", Secret: []byte(testAccessSecret)}},
+		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte(testRefreshSecret)}},
+		AccessTTL:   time.Hour,
+		RefreshTTL:  time.Hour,
+		Issuer:      testIssuer,
+		Leeway:      10 * time.Second,
+	})
+	require.NoError(t, err)
+	claims := buildTestAccessClaims(uuid.New())
+	claims.IssuedAt = jwt.NewNumericDate(time.Now().Add(2 * time.Second))
+	tokenString := signTestAccessClaims(t, claims, "0")
+	got, err := service.ValidateAccessToken(context.Background(), tokenString)
+	require.NoError(t, err)
+	assert.Equal(t, claims.UserID, got.UserID)
+}
+
+func TestJWTService_ValidateAccessToken_RejectsFutureIssuedAtBeyondLeeway(t *testing.T) {
+	t.Parallel()
+	service, err := NewJWTService(Config{
+		AccessKeys:  []KeyEntry{{Kid: "0", Secret: []byte(testAccessSecret)}},
+		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte(testRefreshSecret)}},
+		AccessTTL:   time.Hour,
+		RefreshTTL:  time.Hour,
+		Issuer:      testIssuer,
+		Leeway:      10 * time.Second,
+	})
+	require.NoError(t, err)
+	claims := buildTestAccessClaims(uuid.New())
+	claims.IssuedAt = jwt.NewNumericDate(time.Now().Add(30 * time.Second))
+	tokenString := signTestAccessClaims(t, claims, "0")
+	got, err := service.ValidateAccessToken(context.Background(), tokenString)
+	require.Error(t, err)
+	assert.Nil(t, got)
 }
 
 func TestJWTService_ValidateAccessToken_RefreshTokenReturnsError(t *testing.T) {
@@ -156,6 +331,15 @@ func TestJWTService_RefreshTokens_WithoutRevokerReturnsErr(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRevokerRequired)
 }
 
+func TestJWTService_RevokeTokens_WithoutRevokerReturnsErrBeforeParsing(t *testing.T) {
+	t.Parallel()
+	service := newTestService(t, nil)
+	err := service.RevokeAccessToken(context.Background(), "not-a-token")
+	require.ErrorIs(t, err, ErrRevokerRequired)
+	err = service.RevokeRefreshToken(context.Background(), "not-a-token")
+	require.ErrorIs(t, err, ErrRevokerRequired)
+}
+
 func TestJWTService_RefreshTokens_InvalidToken(t *testing.T) {
 	t.Parallel()
 	service := newTestService(t, &memoryRevocationStore{})
@@ -186,6 +370,29 @@ func TestJWTService_NewJWTService_EmptyIssuer(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "issuer")
+}
+
+func TestJWTService_NewJWTService_InvalidLeeway(t *testing.T) {
+	t.Parallel()
+	base := Config{
+		AccessKeys:  []KeyEntry{{Kid: "0", Secret: []byte(testAccessSecret)}},
+		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte(testRefreshSecret)}},
+		AccessTTL:   time.Hour,
+		RefreshTTL:  time.Hour,
+		Issuer:      testIssuer,
+	}
+
+	negative := base
+	negative.Leeway = -time.Second
+	_, err := NewJWTService(negative)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "leeway")
+
+	tooLarge := base
+	tooLarge.Leeway = MaxLeeway + time.Second
+	_, err = NewJWTService(tooLarge)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "leeway")
 }
 
 func TestJWTService_RefreshTokens_RevokesOldToken(t *testing.T) {
