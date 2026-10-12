@@ -7,6 +7,7 @@ linters:
     - dupl
     - err113
     - exhaustruct
+    - exhaustruct_v5
     - funlen
     - gochecknoglobals
     - godoclint
@@ -29,7 +30,6 @@ linters:
     - paralleltest
     - tagliatelle
     - wsl_v5
-    - thelper
 
   settings:
     cyclop:
@@ -165,7 +165,8 @@ formatters:
     - goimports
   settings:
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
     goimports:
       local-prefixes:
         - github.com/wahrwelt-kit
