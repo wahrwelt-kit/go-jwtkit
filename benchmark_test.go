@@ -17,9 +17,30 @@ const (
 	benchAccessSecret  = "access-secret-at-least-32-bytes!"
 	benchRefreshSecret = "refresh-secret-at-least-32-bytes!"
 	benchIssuer        = "bench-issuer"
+	benchInputBatch    = 256
 )
 
+func appendBenchTokenPairs(b *testing.B, svc *JWTService, ctx context.Context, pairs []*TokenPair) []*TokenPair {
+	b.Helper()
+	for range benchInputBatch {
+		pair, err := svc.GenerateTokenPair(ctx, uuid.New(), "admin")
+		if err != nil {
+			b.Fatal(err)
+		}
+		pairs = append(pairs, pair)
+	}
+	return pairs
+}
+
+func appendBenchUserIDs(userIDs []uuid.UUID) []uuid.UUID {
+	for range benchInputBatch {
+		userIDs = append(userIDs, uuid.New())
+	}
+	return userIDs
+}
+
 func benchHS256Service(b *testing.B, revoker RevocationStore) *JWTService {
+	b.Helper()
 	svc, err := NewJWTService(Config{
 		AccessKeys:     []KeyEntry{{Kid: "0", Secret: []byte(benchAccessSecret)}},
 		RefreshKeys:    []KeyEntry{{Kid: "0", Secret: []byte(benchRefreshSecret)}},
@@ -40,10 +61,11 @@ func BenchmarkJWTService_GenerateTokenPair(b *testing.B) {
 	svc := benchHS256Service(b, nil)
 	ctx := context.Background()
 	userID := uuid.New()
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.GenerateTokenPair(ctx, userID, "admin")
+		if _, err := svc.GenerateTokenPair(ctx, userID, "admin"); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -55,10 +77,11 @@ func BenchmarkJWTService_ValidateAccessToken(b *testing.B) {
 		b.Fatal(err)
 	}
 	token := pair.AccessToken
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.ValidateAccessToken(ctx, token)
+		if _, err := svc.ValidateAccessToken(ctx, token); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -70,10 +93,11 @@ func BenchmarkJWTService_ValidateRefreshToken(b *testing.B) {
 		b.Fatal(err)
 	}
 	token := pair.RefreshToken
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.ValidateRefreshToken(ctx, token)
+		if _, err := svc.ValidateRefreshToken(ctx, token); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -86,10 +110,11 @@ func BenchmarkJWTService_ValidateAccessToken_WithRevocationCheck(b *testing.B) {
 		b.Fatal(err)
 	}
 	token := pair.AccessToken
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.ValidateAccessToken(ctx, token)
+		if _, err := svc.ValidateAccessToken(ctx, token); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -102,7 +127,6 @@ func BenchmarkJWTService_RefreshTokens(b *testing.B) {
 		b.Fatal(err)
 	}
 	refreshToken := pair.RefreshToken
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
 		newPair, err := svc.RefreshTokens(ctx, refreshToken)
@@ -117,18 +141,19 @@ func BenchmarkJWTService_RevokeRefreshToken(b *testing.B) {
 	revoker := &memoryRevocationStore{}
 	svc := benchHS256Service(b, revoker)
 	ctx := context.Background()
-	pairs := make([]*TokenPair, b.N)
-	for i := range b.N {
-		pair, err := svc.GenerateTokenPair(ctx, uuid.New(), "admin")
-		if err != nil {
+	pairs := appendBenchTokenPairs(b, svc, ctx, make([]*TokenPair, 0, benchInputBatch))
+	b.ReportAllocs()
+	i := 0
+	for b.Loop() {
+		if i == len(pairs) {
+			b.StopTimer()
+			pairs = appendBenchTokenPairs(b, svc, ctx, pairs)
+			b.StartTimer()
+		}
+		if err := svc.RevokeRefreshToken(ctx, pairs[i].RefreshToken); err != nil {
 			b.Fatal(err)
 		}
-		pairs[i] = pair
-	}
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := range b.N {
-		_ = svc.RevokeRefreshToken(ctx, pairs[i].RefreshToken)
+		i++
 	}
 }
 
@@ -136,18 +161,19 @@ func BenchmarkJWTService_RevokeAccessToken(b *testing.B) {
 	revoker := &memoryRevocationStore{}
 	svc := benchHS256Service(b, revoker)
 	ctx := context.Background()
-	pairs := make([]*TokenPair, b.N)
-	for i := range b.N {
-		pair, err := svc.GenerateTokenPair(ctx, uuid.New(), "admin")
-		if err != nil {
+	pairs := appendBenchTokenPairs(b, svc, ctx, make([]*TokenPair, 0, benchInputBatch))
+	b.ReportAllocs()
+	i := 0
+	for b.Loop() {
+		if i == len(pairs) {
+			b.StopTimer()
+			pairs = appendBenchTokenPairs(b, svc, ctx, pairs)
+			b.StartTimer()
+		}
+		if err := svc.RevokeAccessToken(ctx, pairs[i].AccessToken); err != nil {
 			b.Fatal(err)
 		}
-		pairs[i] = pair
-	}
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := range b.N {
-		_ = svc.RevokeAccessToken(ctx, pairs[i].AccessToken)
+		i++
 	}
 }
 
@@ -155,18 +181,24 @@ func BenchmarkJWTService_RevokeAllForUser(b *testing.B) {
 	revoker := &memoryRevocationStore{}
 	svc := benchHS256Service(b, revoker)
 	ctx := context.Background()
-	userIDs := make([]uuid.UUID, b.N)
-	for i := range b.N {
-		userIDs[i] = uuid.New()
-	}
-	b.ResetTimer()
+	userIDs := appendBenchUserIDs(make([]uuid.UUID, 0, benchInputBatch))
 	b.ReportAllocs()
-	for i := range b.N {
-		_ = svc.RevokeAllForUser(ctx, userIDs[i])
+	i := 0
+	for b.Loop() {
+		if i == len(userIDs) {
+			b.StopTimer()
+			userIDs = appendBenchUserIDs(userIDs)
+			b.StartTimer()
+		}
+		if err := svc.RevokeAllForUser(ctx, userIDs[i]); err != nil {
+			b.Fatal(err)
+		}
+		i++
 	}
 }
 
 func benchRS256Service(b *testing.B) *JWTServiceAsymmetric {
+	b.Helper()
 	accessPriv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		b.Fatal(err)
@@ -190,10 +222,11 @@ func BenchmarkJWTServiceAsymmetric_RS256_GenerateTokenPair(b *testing.B) {
 	svc := benchRS256Service(b)
 	ctx := context.Background()
 	userID := uuid.New()
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.GenerateTokenPair(ctx, userID, "admin")
+		if _, err := svc.GenerateTokenPair(ctx, userID, "admin"); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -205,14 +238,16 @@ func BenchmarkJWTServiceAsymmetric_RS256_ValidateAccessToken(b *testing.B) {
 		b.Fatal(err)
 	}
 	token := pair.AccessToken
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.ValidateAccessToken(ctx, token)
+		if _, err := svc.ValidateAccessToken(ctx, token); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func benchES256Service(b *testing.B) *JWTServiceAsymmetric {
+	b.Helper()
 	accessPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		b.Fatal(err)
@@ -236,10 +271,11 @@ func BenchmarkJWTServiceAsymmetric_ES256_GenerateTokenPair(b *testing.B) {
 	svc := benchES256Service(b)
 	ctx := context.Background()
 	userID := uuid.New()
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.GenerateTokenPair(ctx, userID, "admin")
+		if _, err := svc.GenerateTokenPair(ctx, userID, "admin"); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -251,14 +287,16 @@ func BenchmarkJWTServiceAsymmetric_ES256_ValidateAccessToken(b *testing.B) {
 		b.Fatal(err)
 	}
 	token := pair.AccessToken
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.ValidateAccessToken(ctx, token)
+		if _, err := svc.ValidateAccessToken(ctx, token); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func benchEdDSAService(b *testing.B) *JWTServiceAsymmetric {
+	b.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		b.Fatal(err)
@@ -282,10 +320,11 @@ func BenchmarkJWTServiceAsymmetric_EdDSA_GenerateTokenPair(b *testing.B) {
 	svc := benchEdDSAService(b)
 	ctx := context.Background()
 	userID := uuid.New()
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.GenerateTokenPair(ctx, userID, "admin")
+		if _, err := svc.GenerateTokenPair(ctx, userID, "admin"); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -297,9 +336,10 @@ func BenchmarkJWTServiceAsymmetric_EdDSA_ValidateAccessToken(b *testing.B) {
 		b.Fatal(err)
 	}
 	token := pair.AccessToken
-	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = svc.ValidateAccessToken(ctx, token)
+		if _, err := svc.ValidateAccessToken(ctx, token); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

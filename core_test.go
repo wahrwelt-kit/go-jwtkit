@@ -140,7 +140,11 @@ func (r *neverFirstRevoker) Revoke(_ context.Context, _ string, _ time.Duration)
 func (r *neverFirstRevoker) RevokeIfFirst(_ context.Context, _ string, _ time.Duration) (bool, error) {
 	return false, nil
 }
-func (r *neverFirstRevoker) IsRevoked(_ context.Context, _ string) (bool, error) { return false, nil }
+
+func (r *neverFirstRevoker) IsRevoked(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
 func (r *neverFirstRevoker) RevokeUserTokens(_ context.Context, _ uuid.UUID, _ time.Duration) error {
 	return nil
 }

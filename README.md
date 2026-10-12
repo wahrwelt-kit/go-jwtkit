@@ -8,6 +8,8 @@ JWT issuance, validation, and revocation for access/refresh token pairs.
 
 ## Install
 
+Requires Go 1.27.2 or newer.
+
 ```bash
 go get github.com/wahrwelt-kit/go-jwtkit
 ```
@@ -30,38 +32,61 @@ import jwt "github.com/wahrwelt-kit/go-jwtkit"
 ## Example
 
 ```go
-svc, err := jwt.NewJWTService(jwt.Config{
-    AccessKeys:     []jwt.KeyEntry{{Kid: "0", Secret: accessSecret}},
-    RefreshKeys:    []jwt.KeyEntry{{Kid: "0", Secret: refreshSecret}},
-    AccessTTL:      time.Hour,
-    RefreshTTL:      24 * time.Hour,
-    Issuer:         "my-app",
-    Revoker:        redisRevoker,
-    UserRoleLookup: userRoleLookup,
-    Audience:       "",
-    Leeway:         30 * time.Second,
-})
-pair, _ := svc.GenerateTokenPair(ctx, userID, "admin")
+import (
+    "context"
+    "time"
 
-mux := http.NewServeMux()
-mux.Handle("/api/", jwt.JWTAuth(svc)(apiHandler))
-```
+    "github.com/google/uuid"
+    jwt "github.com/wahrwelt-kit/go-jwtkit"
+)
 
-In handlers after JWTAuth:
+func issueTokenPair(
+    ctx context.Context,
+    userID uuid.UUID,
+    accessSecret, refreshSecret []byte,
+) (*jwt.TokenPair, error) {
+    svc, err := jwt.NewJWTService(jwt.Config{
+        AccessKeys:     []jwt.KeyEntry{{Kid: "0", Secret: accessSecret}},
+        RefreshKeys:    []jwt.KeyEntry{{Kid: "0", Secret: refreshSecret}},
+        AccessTTL:      time.Hour,
+        RefreshTTL:     24 * time.Hour,
+        Issuer:         "my-app",
+        Leeway:         30 * time.Second,
+    })
+    if err != nil {
+        return nil, err
+    }
 
-```go
-userID, ok := jwt.UserIDFromContext(r.Context())
-claims, ok := jwt.ClaimsFromContext(r.Context())
+    pair, err := svc.GenerateTokenPair(ctx, userID, "admin")
+    if err != nil {
+        return nil, err
+    }
+
+    return pair, nil
+}
 ```
 
 Export public keys for verification services:
 
 ```go
-set, err := jwt.PublicJWKSetFromKeys(accessKeys)
-if err != nil {
-    return err
+import (
+    "encoding/json/v2"
+    "fmt"
+    "io"
+
+    jwt "github.com/wahrwelt-kit/go-jwtkit"
+)
+
+func writeJWKS(w io.Writer, accessKeys []jwt.AsymmetricKeyEntry) error {
+    set, err := jwt.PublicJWKSetFromKeys(accessKeys)
+    if err != nil {
+        return fmt.Errorf("build JWKS: %w", err)
+    }
+    if err := json.MarshalWrite(w, set); err != nil {
+        return fmt.Errorf("write JWKS: %w", err)
+    }
+    return nil
 }
-_ = json.NewEncoder(w).Encode(set)
 ```
 
 Use go-httpkit error responses with JWTAuth:
@@ -105,6 +130,7 @@ auth := jwt.JWTAuth(svc, jwt.WithErrorHandler(func(w http.ResponseWriter, r *htt
 - Refresh tokens are one-time-use when `RefreshTokens` is backed by a `RevocationStore`.
 - Prefer `Authorization: Bearer` for APIs; cookie extraction is available when the application owns the cookie security policy.
 - Client-facing auth errors stay generic. Use server logs and `errors.Is` on returned errors for diagnostics.
+- JWT signing and parsing remain delegated to `github.com/golang-jwt/jwt/v5`; the JSON v2 change only updates middleware error encoding. JWT wire format, claims, numeric dates, and public `google/uuid` types are unchanged.
 
 ## Testing
 

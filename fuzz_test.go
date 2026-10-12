@@ -101,18 +101,13 @@ func FuzzValidateAccessTokenCustomClaims(f *testing.F) {
 			t.Skip()
 		}
 		now := time.Now().Add(-time.Second)
-		claims := &CustomClaims{
-			RegisteredClaims: jwt.RegisteredClaims{
-				ID:        jti,
-				Subject:   subject,
-				ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
-				IssuedAt:  jwt.NewNumericDate(now),
-				NotBefore: jwt.NewNumericDate(now),
-				Issuer:    testIssuer,
-			},
-			UserID:    userID,
-			TokenType: tokenType,
-		}
+		claims := &CustomClaims{UserID: userID, TokenType: tokenType}
+		claims.ID = jti
+		claims.Subject = subject
+		claims.ExpiresAt = jwt.NewNumericDate(now.Add(time.Hour))
+		claims.IssuedAt = jwt.NewNumericDate(now)
+		claims.NotBefore = jwt.NewNumericDate(now)
+		claims.Issuer = testIssuer
 		token := signFuzzAccessClaims(t, claims)
 		got, err := svc.ValidateAccessToken(context.Background(), token)
 		if err != nil {
@@ -134,8 +129,8 @@ func FuzzValidateAccessTokenCustomClaims(f *testing.F) {
 	})
 }
 
-func newFuzzService(t testing.TB) *JWTService {
-	t.Helper()
+func newFuzzService(tb testing.TB) *JWTService {
+	tb.Helper()
 	svc, err := NewJWTService(Config{
 		AccessKeys:  []KeyEntry{{Kid: "0", Secret: []byte(testAccessSecret)}},
 		RefreshKeys: []KeyEntry{{Kid: "0", Secret: []byte(testRefreshSecret)}},
@@ -144,15 +139,15 @@ func newFuzzService(t testing.TB) *JWTService {
 		Issuer:      testIssuer,
 		Leeway:      time.Second,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return svc
 }
 
-func signFuzzAccessClaims(t testing.TB, claims *CustomClaims) string {
-	t.Helper()
+func signFuzzAccessClaims(tb testing.TB, claims *CustomClaims) string {
+	tb.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	token.Header["kid"] = "0"
 	tokenString, err := token.SignedString([]byte(testAccessSecret))
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return tokenString
 }
